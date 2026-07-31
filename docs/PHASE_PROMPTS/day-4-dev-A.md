@@ -6,7 +6,7 @@ You are **Dev A** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** all POMs, `portfolio-common` (frozen), `portfolio-core`, Flyway `V1`–`V9`.
+**You own:** the POM, `common/` (frozen), `support/`, `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, Flyway `V1`–`V9`.
 
 **Status:** the MVP shipped last night and is tagged `v0.1-mvp`. Browse, view performance, add
 and remove all work end to end in a browser across three currencies, with real Google auth and
@@ -65,7 +65,7 @@ controllers().should().notReturnDomainTypes();
 
 ## D4-A2 · `ConcurrentWriteIT` — 1.5 h · 🔴
 
-`portfolio-core/…/core/transaction/ConcurrentWriteIT.java`
+`transaction/ConcurrentWriteIT.java`
 
 Two threads, a `CountDownLatch`, both POSTing a BUY of 1 AAPL to the same portfolio.
 **Assert the final quantity is 2, never 1.**
@@ -102,7 +102,7 @@ exclusion is missing, add it and note why in the POM comment.
 
 ## D4-A4 · `AllocationService` — 1.5 h
 
-`portfolio-core/…/core/valuation/AllocationService.java`
+`valuation/AllocationService.java`
 
 Breakdown by `ASSET_TYPE`, `SECTOR`, `CURRENCY`, `INSTRUMENT` — all in base currency, reusing
 the base-currency projection you already built.
@@ -119,8 +119,11 @@ empty slices, not a divide-by-zero; a single holding → one slice at 100 %; cas
 
 ## Rules
 
-- **`portfolio-common` is frozen.**
-- `portfolio-core` must not import `portfolio-platform` — now enforced by your own ArchUnit rule.
+- **`common/` is frozen.**
+- Domain code must not import `marketdata`/`fx` directly. This was going to be a *second*,
+  redundant check on top of the Maven module graph — ADR-0012 (Day 1) removed the module graph,
+  so your ArchUnit rule is now the only automated enforcement left. Worth doing early today, not
+  late.
 - No `double`, no `float`. `compareTo`, never `equals`. Rounding through `MoneyUtils`.
 - No JPA, no Hibernate, no Spring Data. No `JdbcTemplate` outside a `*Repository`.
 - Migrations only in `V1`–`V9`.
@@ -128,7 +131,7 @@ empty slices, not a divide-by-zero; a single holding → one slice at 100 %; cas
 
 ## Do not touch
 
-`portfolio-platform/**` (Dev B) · `portfolio-api/**` (Dev C) · migrations `V10`+ · frontend.
+`config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `api/`, `graphql/` (Dev C) · migrations `V10`+ · frontend.
 
 ---
 

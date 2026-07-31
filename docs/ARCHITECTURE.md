@@ -19,11 +19,11 @@ graph TB
     JWKS["JWKS endpoint"]
   end
 
-  subgraph "Protify backend — one JVM"
-    API["portfolio-api<br/>REST + GraphQL"]
-    PLAT["portfolio-platform<br/>security · user · marketdata · fx"]
-    CORE["portfolio-core<br/>instrument · portfolio · transaction<br/>holding · valuation"]
-    COMMON["portfolio-common<br/>ports · MoneyUtils · errors · enums"]
+  subgraph "Protify backend — one JVM, one Maven module since Day 1"
+    API["api/, graphql/<br/>REST + GraphQL"]
+    PLAT["security/, user/, marketdata/, fx/<br/>config/"]
+    CORE["instrument/, portfolio/, transaction/<br/>holding/, valuation/"]
+    COMMON["common/<br/>ports · MoneyUtils · errors · enums"]
   end
 
   INS["portfolio-insights<br/>Python FastAPI + LLM"]
@@ -56,34 +56,47 @@ product still works** — that constraint drives most of what follows.
 
 ---
 
-## 2. Modules and the dependency rule
+## 2. Packages and the dependency rule
+
+> **Amended Day 1.** Through Day 1 this was five Maven modules (`portfolio-common`,
+> `portfolio-db`, `portfolio-core`, `portfolio-platform`, `portfolio-api`) with the arrows below
+> enforced by the module graph — `core → platform` did not compile because the dependency did
+> not exist. The team collapsed it to one module the same day (`/docs/DECISIONS/0012`,
+> superseding this specific clause of ADR-0003). The package list and the *intended* dependency
+> direction are unchanged; only the word "enforced" below is no longer true.
 
 ```mermaid
 graph TD
-  API[portfolio-api] --> CORE[portfolio-core]
-  API --> PLAT[portfolio-platform]
-  API --> COMMON[portfolio-common]
+  API[api, graphql] --> CORE["instrument, portfolio, transaction,<br/>holding, valuation"]
+  API --> PLAT["config, security, user,<br/>marketdata, fx"]
+  API --> COMMON[common]
+  CORE -.->|should not, nothing stops it| PLAT
   CORE --> COMMON
   PLAT --> COMMON
-  CORE -.->|test scope| DB[portfolio-db]
-  PLAT -.->|test scope| DB
-  API --> DB
 
   style COMMON fill:#6e7681,color:#fff
+  style CORE stroke:#c00,stroke-width:2px
 ```
 
-| Module | Owner | Contains | Frozen? |
+| Package(s) | Owner | Contains | Frozen? |
 |---|---|---|---|
-| `portfolio-common` | A | `MoneyUtils`, `Money`, enums, `DomainException` tree, **ports**: `MarketDataProvider`, `FxRateProvider` | **Yes, end of Day 1** |
-| `portfolio-db` | shared | Flyway migrations only. Add-only, per-dev number ranges | No — grows daily |
-| `portfolio-core` | A | `instrument` `portfolio` `transaction` `holding` `valuation` | No |
-| `portfolio-platform` | B | `config` `security` `user` `marketdata` `fx` `insights` | No |
-| `portfolio-api` | C | `api` (controllers, dto, mapper, error) `graphql`, `PortfolioApplication` | No |
+| `common/` | A | `MoneyUtils`, `Money`, enums, `DomainException` tree, **ports**: `MarketDataProvider`, `FxRateProvider` | **Yes, end of Day 1** |
+| `support/` | A | `BaseRepository` | No |
+| `db/migration/` (resources, not code) | shared | Flyway migrations only. Add-only, per-dev number ranges | No — grows daily |
+| `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/` | A | domain services and repositories | No |
+| `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` | B | | No |
+| `api/`, `graphql/` | C | controllers, dto, mapper, error, `PortfolioApplication` | No |
 
-**The rule that matters: `portfolio-core` has no dependency on `portfolio-platform`.**
+**The rule that still matters, now unenforced: `instrument`/`portfolio`/`transaction`/
+`holding`/`valuation` code has no business importing `marketdata`, `fx`, or an HTTP client.**
 Core needs prices and FX rates; it gets them through interfaces declared in `common` and
-implemented in `platform`, wired by Spring at startup. A developer who tries to call an HTTP
-client from the valuation engine gets a compile error, not a code-review comment.
+implemented alongside `marketdata`/`fx`, wired by Spring at startup. Until Day 1 a developer who
+tried to call an HTTP client from the valuation engine got a compile error. Now they get a
+green build and a review comment — the same discipline `/docs/DECISIONS/0003` rejected as a
+starting design ("package-only boundaries... does not survive 17:00 on Day 5") is what this
+codebase now runs on, by later, explicit choice. An ArchUnit rule (`ArchitectureTest`, originally
+scheduled for Day 4) is the way to get a compiler-shaped guarantee back; until it exists, review
+is the only check.
 
 This is ports-and-adapters applied only where it earns its keep — at the two boundaries that
 face the network. Everywhere else, a service calls a repository directly, because a project
@@ -91,7 +104,7 @@ this size does not need an interface per class.
 
 ---
 
-## 3. Layering inside a module
+## 3. Layering inside a package
 
 ```
 Controller      HTTP, status codes, DTOs. No business logic. Never sees a domain entity.
@@ -104,9 +117,12 @@ Repository      NamedParameterJdbcTemplate + explicit SQL + hand-written RowMapp
 MySQL
 ```
 
-Enforced by ownership, review, and one structural fact: DTO records live in
-`portfolio-api`, which `portfolio-core` cannot see. A repository type physically cannot be
-returned from a controller without adding a dependency that does not exist.
+Enforced by ownership and review. Through Day 1 there was also a structural fact backing it up:
+DTO records lived in `portfolio-api`, a module `portfolio-core` could not see, so a repository
+type physically could not be returned from a controller — the dependency needed to do it did
+not exist. That structural guarantee is gone now that everything is one module (`/docs/DECISIONS/0012`);
+a repository type returned from a controller compiles fine today and is caught in review, not
+by the build.
 
 ---
 
@@ -359,7 +375,7 @@ graph TB
 |---|---|---|---|
 | **1 · Market data + FX** | Already behind `MarketDataProvider` / `FxRateProvider` in `common`. No core code imports an HTTP client | ~1 day: new Spring Boot app, ports become a Feign/RestClient adapter, `price_history` and `fx_rate` move with it | Price refresh starts competing with request traffic, or a second product needs the same prices |
 | **2 · Valuation** | `ProjectionEngine` is a pure function with no I/O. `ValuationService` performs no writes | ~2 days: needs a transaction-history feed (event stream or read replica) | Valuation CPU dominates, or back-testing arrives and needs to scale independently |
-| **3 · GraphQL BFF** | `portfolio-api/graphql` shares only the security context with REST | ~0.5 day: it is already a separate package with its own resolvers | A second client (mobile) needs a different shape from the REST one |
+| **3 · GraphQL BFF** | `graphql/` shares only the security context with REST | ~0.5 day: it is already a separate package with its own resolvers | A second client (mobile) needs a different shape from the REST one |
 | **4 · Insights** | Already a separate process, separate language, feature-flagged, with an in-process fallback | Zero — it is already extracted | Done |
 
 Deliberately *not* seams: `portfolio`, `transaction` and `holding`. They share one
@@ -392,14 +408,14 @@ most of what gets assessed.
 
 ## 10. Cross-cutting concerns, and where each one lives
 
-| Concern | Implementation | Module |
+| Concern | Implementation | Package area (Dev) |
 |---|---|---|
-| Correlation ID | `CorrelationIdFilter` → MDC → response header → every `ProblemDetail` | platform |
-| Authentication | Spring Security resource server, JWKS-validated | platform |
-| Authorisation | `WHERE user_id = :userId` in every SQL statement. Not an annotation — a column | core |
-| Error translation | One `@RestControllerAdvice`, RFC 9457 | api |
-| Rounding | `MoneyUtils` only. Scale 4 money, 6 quantity, 8 FX, `HALF_UP` | common |
-| Time | UTC everywhere; `Clock` injected so tests can freeze it | common |
-| Caching | Caffeine, two caches with different TTLs, declared in one `CacheConfig` | platform |
-| Transactions | `@Transactional` on service methods only, never on repositories | core |
-| Config | `application.yml` + profiles, every secret an env var with a local default | platform |
+| Correlation ID | `CorrelationIdFilter` → MDC → response header → every `ProblemDetail` | security/web (B) |
+| Authentication | Spring Security resource server, JWKS-validated | security (B) |
+| Authorisation | `WHERE user_id = :userId` in every SQL statement. Not an annotation — a column | instrument/portfolio/transaction/holding/valuation (A) |
+| Error translation | One `@RestControllerAdvice`, RFC 9457 | api (C) |
+| Rounding | `MoneyUtils` only. Scale 4 money, 6 quantity, 8 FX, `HALF_UP` | common (A) |
+| Time | UTC everywhere; `Clock` injected so tests can freeze it | common (A) |
+| Caching | Caffeine, two caches with different TTLs, declared in one `CacheConfig` | config (B) |
+| Transactions | `@Transactional` on service methods only, never on repositories | instrument/portfolio/transaction/holding/valuation (A) |
+| Config | `application.yml` + profiles, every secret an env var with a local default | config (B) |

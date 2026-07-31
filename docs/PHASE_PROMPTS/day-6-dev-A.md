@@ -6,7 +6,7 @@ You are **Dev A** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** all POMs, `portfolio-common` (frozen), `portfolio-core`, Flyway `V1`–`V9`.
+**You own:** the POM, `common/` (frozen), `support/`, `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, Flyway `V1`–`V9`.
 
 **Status:** MVP shipped Day 3. Edge cases, concurrency and the coverage gate Day 4. Docker,
 compose and Jenkins Day 4. Analytics and snapshots Day 5, if Day 5 was not spent on overflow.
@@ -40,7 +40,7 @@ non-zero realised P&L, and at least one closed position.
 
 ## D6-A2 · `ProjectionRebuildConsistencyIT` — 1.0 h · 🔴
 
-`portfolio-core/…/core/holding/ProjectionRebuildConsistencyIT.java`
+`holding/ProjectionRebuildConsistencyIT.java`
 
 For **every** portfolio in the database: rebuild the projection from `txn` and assert the result
 is identical — quantity, `avg_cost` and `realised_pnl` — to what is stored in `holding`.
@@ -85,13 +85,13 @@ describing them.
 ## Rules
 
 - **Feature freeze at 13:00.** After that, demo-blocking fixes only.
-- `portfolio-common` is frozen. Migrations only in `V1`–`V9`.
+- `common/` is frozen. Migrations only in `V1`–`V9`.
 - No `double`, no `float`. No JPA. No `JdbcTemplate` outside a `*Repository`.
 - **Do not refactor anything today.** However tempting. A green build is worth more than clean code you cannot re-verify.
 
 ## Do not touch
 
-`portfolio-platform/**` (Dev B) · `portfolio-api/**` (Dev C) · migrations `V10`+ · frontend.
+`config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `api/`, `graphql/` (Dev C) · migrations `V10`+ · frontend.
 
 ---
 

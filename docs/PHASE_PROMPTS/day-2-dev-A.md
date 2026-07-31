@@ -6,7 +6,7 @@ You are **Dev A** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** all POMs, `portfolio-common` (**frozen since end of Day 1**), `portfolio-core`,
+**You own:** the POM, `common/` (**frozen since end of Day 1**), `support/`, `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`,
 Flyway `V1`–`V9`.
 
 **Already merged (Day 1):** `MoneyUtils`, `Money`, five enums with `fromDbValue`, the
@@ -17,7 +17,7 @@ Flyway `V1`–`V9`.
 > ## Today's headline
 > **`ProjectionEngine` (D2-A3) is your first task, not your third.** Dev C's controllers and
 > Dev A's own Day-3 valuation both queue behind it. It has no dependencies beyond
-> `portfolio-common`, deliberately, so nothing can block it.
+> `common/`, deliberately, so nothing can block it.
 
 **Read first:** `/CLAUDE.md` · `/docs/PLAN.md` §5 (**essential**) · `/docs/REFERENCE_DESIGN.md`
 §3 · `/docs/DECISIONS/0002-transaction-centric-model.md` · `/docs/TEST_PLAN.md` §4.
@@ -26,7 +26,7 @@ Flyway `V1`–`V9`.
 
 ## D2-A3 · `ProjectionEngine` — 2.5 h · 🔴 **DO THIS FIRST**
 
-`portfolio-core/…/core/holding/ProjectionEngine.java`, `HoldingState.java`, `ProjectionContext.java`
+`holding/ProjectionEngine.java`, `HoldingState.java`, `ProjectionContext.java`
 
 A **pure function**. No Spring, no annotations, no database, no `LocalDate.now()`.
 
@@ -93,7 +93,7 @@ you only prove the code agrees with itself.
 
 ## D2-A1 · `PortfolioRepository` + `PortfolioService` — 1.5 h · 🔴
 
-`portfolio-core/…/core/portfolio/`
+`portfolio/`
 
 **Every method takes `userId` as its first parameter, and every SQL statement has
 `WHERE user_id = :userId`.** Not sometimes — always. A repository method that *can* return
@@ -119,7 +119,7 @@ OtherUsersPortfolio`**; delete cascades to `txn` and `holding` in one transactio
 
 ## D2-A2 · `InstrumentRepository` — 1.0 h · 🔴
 
-`portfolio-core/…/core/instrument/`
+`instrument/`
 
 Not user-scoped — the instrument catalogue is shared.
 
@@ -141,7 +141,7 @@ unknown symbol → `Optional.empty()`; limit respected; filters compose.
 
 ## D2-A4 · `TransactionRepository` + `HoldingRepository` — 1.5 h · 🔴
 
-`portfolio-core/…/core/transaction/` and `core/holding/HoldingRepository.java`
+`transaction/` and `holding/HoldingRepository.java`
 
 ```java
 long insert(Txn txn);                                        // BaseRepository KeyHolder
@@ -169,18 +169,20 @@ idempotent under repeat; `deleteAllForPortfolio` clears exactly one portfolio.
 
 ## Rules
 
-- **`portfolio-common` is frozen.** Need a change? Team agreement first, in the channel.
+- **`common/` is frozen.** Need a change? Team agreement first, in the channel.
 - No `double`, no `float`. `BigDecimal` compared with `compareTo`, never `equals`.
 - All rounding through `MoneyUtils`.
 - No JPA, no Hibernate, no Spring Data. Hand-written `RowMapper`s only.
 - No `JdbcTemplate` outside a `*Repository`.
 - No business logic in a repository — that includes "just this one `if`".
-- `portfolio-core` must not import `portfolio-platform`.
+- Domain code (`instrument`/`portfolio`/`transaction`/`holding`/`valuation`) must not import
+  `marketdata`/`fx`/`security`/etc. directly — only `MarketDataProvider`/`FxRateProvider` in
+  `common`. No longer compile-enforced since ADR-0012; review it by eye.
 - Migrations only in `V1`–`V9`, and only new ones.
 
 ## Do not touch
 
-`portfolio-platform/**` (Dev B) · `portfolio-api/**` (Dev C) · migrations `V10`+ · frontend.
+`config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `api/`, `graphql/` (Dev C) · migrations `V10`+ · frontend.
 
 ---
 

@@ -6,7 +6,7 @@ You are **Dev C** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-api`, GitHub Actions, Flyway `V20`–`V29`, most frontend work — and
+**You own:** `api/`, `graphql/`, GitHub Actions, Flyway `V20`–`V29`, most frontend work — and
 today, the presentation.
 
 **Status:** MVP Day 3. Cross-user proof, base-currency switching and the allocation pie Day 4.
@@ -93,13 +93,13 @@ days, here is the reasoning, and here is what we built instead."*
 ## Rules
 
 - **Feature freeze at 13:00.** You enforce it.
-- `portfolio-common` is frozen. **You may not edit `pom.xml`.** Migrations only in `V20`–`V29`.
+- `common/` is frozen. **You may not edit `pom.xml`.** Migrations only in `V20`–`V29`.
 - No `double`, no `float`. **Another user's resource is 404, never 403.**
 - **Do not refactor anything today.** However tempting. A green build is worth more than clean code you cannot re-verify.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-platform/**` (Dev B) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `common/` ·
 any POM · migrations `V1`–`V19`.
 
 ---

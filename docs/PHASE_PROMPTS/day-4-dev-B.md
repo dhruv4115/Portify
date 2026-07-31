@@ -6,7 +6,7 @@ You are **Dev B** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-platform`, `scripts/`, `docker/`, `Jenkinsfile`, Flyway `V10`–`V19`.
+**You own:** `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/`, `scripts/`, `docker/`, `Jenkinsfile`, Flyway `V10`–`V19`.
 
 **Status:** the MVP shipped on Day 3, tagged `v0.1-mvp`. Google auth, real prices, real FX,
 three currencies, a working chart. Your caching, rate limiting and circuit breaking are in
@@ -39,7 +39,7 @@ RUN mvn -B -DskipITs clean package
 FROM eclipse-temurin:21-jre-alpine
 RUN addgroup -S app && adduser -S app -G app
 WORKDIR /app
-COPY --from=build /app/portfolio-api/target/*.jar app.jar
+COPY --from=build /app/target/*.jar app.jar
 USER app
 ENV JAVA_TOOL_OPTIONS="-Duser.timezone=UTC"
 EXPOSE 8080
@@ -94,7 +94,7 @@ pipeline {
     stage('Coverage')     { steps { jacoco() } }
     stage('Package')      { steps { sh 'mvn -B -DskipTests package' } }
     stage('Docker build') { steps { sh 'docker build -f docker/Dockerfile -t protify:${BUILD_NUMBER} .' } }
-    stage('Archive')      { steps { archiveArtifacts 'portfolio-api/target/*.jar' } }
+    stage('Archive')      { steps { archiveArtifacts 'target/*.jar' } }
   }
   post {
     failure { echo 'Pipeline failed' }
@@ -129,13 +129,13 @@ Actions is the insurance policy for the Jenkins VM being unreachable.
 
 - **No secret in any image, compose file or `Jenkinsfile`.** Everything from env or Jenkins credentials.
 - **You may not edit `pom.xml`.** Ask Dev A.
-- `portfolio-common` is frozen. Migrations only in `V10`–`V19`.
+- `common/` is frozen. Migrations only in `V10`–`V19`.
 - No `double`, no `float`. No JPA. No `JdbcTemplate` outside a `*Repository`.
 - Do not weaken a test to make the pipeline green. If the pipeline finds a real failure, that is the pipeline working.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-api/**` (Dev C) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `api/`, `graphql/` (Dev C) · `common/` ·
 any POM · migrations `V1`–`V9`, `V20`+.
 
 ---

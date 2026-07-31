@@ -6,7 +6,7 @@ You are **Dev C** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-api` (controllers, `dto/`, `mapper/`, `error/`, `graphql/`), GitHub
+**You own:** `api/` (controllers, `dto/`, `mapper/`, `error/`) and `graphql/`, GitHub
 Actions, Flyway `V20`–`V29`, and most frontend work.
 
 **Status:** the MVP shipped on Day 3, tagged `v0.1-mvp`. Browse, performance, add and remove
@@ -23,7 +23,7 @@ all work in a browser, three currencies into one base currency, real Google auth
 
 ## D4-C1 · `CrossUserAccessIT` — 1.5 h · 🔴 **the one that matters**
 
-`portfolio-api/…/api/security/CrossUserAccessIT.java`
+`api/security/CrossUserAccessIT.java`
 
 One **parameterised** test over every user-scoped endpoint. Set up user A and user B, each with
 a portfolio and transactions, then have A attempt every operation against B's resources:
@@ -115,12 +115,12 @@ shows); mobile layout usable at 390 px.
 - **All errors through `GlobalExceptionHandler`.**
 - **No `double`, no `float`.** Money is `BigDecimal` in Java, a **string** in JSON. Never `parseFloat` an amount you will calculate with.
 - **Another user's resource is 404, never 403.**
-- `portfolio-common` is frozen. **You may not edit `pom.xml`.**
+- `common/` is frozen. **You may not edit `pom.xml`.**
 - Migrations only in `V20`–`V29`.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-platform/**` (Dev B) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `common/` ·
 any POM · migrations `V1`–`V19`.
 
 ---

@@ -6,12 +6,12 @@ You are **Dev B** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-platform` (`security`, `user`, `marketdata`, `fx`, `config`, `web`),
+**You own:** `security/`, `user/`, `marketdata/`, `fx/`, `config/`, `web/`, `insights/`,
 `scripts/`, `docker/`, `Jenkinsfile`, Flyway `V10`–`V19`.
 
 **Already merged:** Google sign-in works end to end; `GET /me` provisions a user;
 `CorrelationIdFilter`; Dev A's `MoneyUtils`, enums, exceptions, and the two **ports** you
-implement today. `portfolio-common` is frozen.
+implement today. `common/` is frozen.
 
 **Today you build the reason the demo cannot fail.** Every external call gets a cache and a
 fallback, and by tonight a real market price appears in the app.
@@ -24,9 +24,9 @@ fallback, and by tonight a real market price appears in the app.
 
 ## D2-B1 · Market-data provider adapters — 2.0 h · 🔴
 
-`portfolio-platform/…/platform/marketdata/provider/`
+`marketdata/provider/`
 
-Implement Dev A's `MarketDataProvider` interface (in `portfolio-common`) twice:
+Implement Dev A's `MarketDataProvider` interface (in `common/`) twice:
 
 **`YahooMarketDataProvider`** — default. Keyless, global coverage.
 `https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=…`
@@ -58,7 +58,7 @@ provider.**
 
 ## D2-B2 · `CachingMarketDataService` — 2.0 h · 🔴
 
-`portfolio-platform/…/platform/marketdata/CachingMarketDataService.java` + `PriceHistoryRepository`
+`marketdata/CachingMarketDataService.java` + `PriceHistoryRepository`
 
 The fallback chain, in order:
 
@@ -144,7 +144,7 @@ instrument has a close over 1000 (a 100× error is invisible in an assertion nob
 
 ## Rules
 
-- **`portfolio-common` is frozen.** Implement the ports as they are. Need a change? Team agreement first.
+- **`common/` is frozen.** Implement the ports as they are. Need a change? Team agreement first.
 - **No `double`, no `float`.** FX rates are `BigDecimal` at scale 8.
 - **No JPA, no Hibernate, no Spring Data.**
 - **No `JdbcTemplate` outside a `*Repository`.**
@@ -155,7 +155,7 @@ instrument has a close over 1000 (a 100× error is invisible in an assertion nob
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-api/**` (Dev C) · `portfolio-common/**` — frozen ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `api/`, `graphql/` (Dev C) · `common/` — frozen ·
 any POM · migrations `V1`–`V9`, `V20`+.
 
 ---

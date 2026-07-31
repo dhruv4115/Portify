@@ -6,7 +6,7 @@ You are **Dev C** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-api` (controllers, `dto/`, `mapper/`, `error/`, `graphql/`), GitHub
+**You own:** `api/` (controllers, `dto/`, `mapper/`, `error/`) and `graphql/`, GitHub
 Actions, Flyway `V20`–`V29`, and most frontend work.
 
 **Status:** MVP Day 3. Day 4 delivered `CrossUserAccessIT`, `PATCH` base-currency switching
@@ -34,7 +34,7 @@ slide gets marks that a broken resolver does not.
 
 ## D5-C1 · GraphQL — 3.0 h · 🟢
 
-`portfolio-api/…/api/graphql/schema.graphqls` + resolvers
+`graphql/schema.graphqls` + resolvers
 
 **The SDL is already written — `/docs/API_CONTRACT.md` §19.** Copy it; do not redesign it.
 
@@ -73,7 +73,7 @@ outside the team it is the only documentation that exists.**
 - What it is, in three sentences
 - Architecture diagram (reuse the Mermaid from `/docs/ARCHITECTURE.md` §1)
 - Five-minute quickstart: clone → `.env` → `docker compose up` → sign in
-- Local development without Docker: native MySQL, `mvn spring-boot:run -pl portfolio-api`
+- Local development without Docker: native MySQL, `mvn spring-boot:run`
 - The stack table, and a link to the frontend repo
 
 **Acceptance:** someone outside the team gets it running from the README alone. Actually ask
@@ -87,13 +87,13 @@ one of the other developers to try it, from a clean clone.
 - **All errors through `GlobalExceptionHandler`** for REST; `extensions` for GraphQL.
 - **No `double`, no `float`.** Money is `BigDecimal` in Java, a **string** in JSON.
 - **Another user's resource is 404 in REST, `null` in GraphQL. Never 403.**
-- `portfolio-common` is frozen. **You may not edit `pom.xml`** — you need `spring-boot-starter-graphql`, so ask Dev A **this morning**.
+- `common/` is frozen. **You may not edit `pom.xml`** — you need `spring-boot-starter-graphql`, so ask Dev A **this morning**.
 - Migrations only in `V20`–`V29`.
 - **Nothing merges after 17:00 today.**
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-platform/**` (Dev B) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `common/` ·
 any POM · migrations `V1`–`V19`.
 
 ---

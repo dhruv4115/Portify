@@ -36,8 +36,8 @@ and what makes the coverage target cheap to hit. See `/docs/PLAN.md` §5.
 ## 2. Naming and layout
 
 ```
-portfolio-core/src/test/java/com/protify/portfolio/holding/ProjectionEngineTest.java
-portfolio-core/src/test/java/com/protify/portfolio/holding/HoldingRepositoryIT.java
+src/test/java/com/protify/portfolio/holding/ProjectionEngineTest.java
+src/test/java/com/protify/portfolio/holding/HoldingRepositoryIT.java
 ```
 
 | Rule | Example |

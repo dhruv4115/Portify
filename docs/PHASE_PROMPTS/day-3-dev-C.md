@@ -6,7 +6,7 @@ You are **Dev C** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-api` (controllers, `dto/`, `mapper/`, `error/`, `graphql/`), GitHub
+**You own:** `api/` (controllers, `dto/`, `mapper/`, `error/`) and `graphql/`, GitHub
 Actions, Flyway `V20`–`V29`, and most frontend work.
 
 **Already merged:** Google sign-in; `GET /me`; `GlobalExceptionHandler` with RFC 9457
@@ -26,7 +26,7 @@ API contract, **frozen**. Dev A lands `TransactionService`, `ValuationService` a
 
 ## D3-C1 · `TransactionController` — 2.0 h · 🔴 the customer's "add" and "remove"
 
-`portfolio-api/…/api/transaction/TransactionController.java` + `CreateTransactionRequest`,
+`api/transaction/TransactionController.java` + `CreateTransactionRequest`,
 `TransactionResponse`
 
 | | | |
@@ -122,12 +122,12 @@ badge when data is old.
 - **All errors through `GlobalExceptionHandler`.**
 - **No `double`, no `float`.** Money is `BigDecimal` in Java, a **string** in JSON.
 - **Another user's resource is 404, never 403.**
-- **`portfolio-common` is frozen. You may not edit `pom.xml`.**
+- **`common/` is frozen. You may not edit `pom.xml`.**
 - The API contract is **frozen** — if the code needs to differ, raise it in the channel before changing either.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-platform/**` (Dev B) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `common/` ·
 any POM · migrations `V1`–`V19`.
 
 ---

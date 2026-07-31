@@ -6,8 +6,7 @@ You are **Dev B** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-platform` (`security`, `user`, `marketdata`, `fx`, `config`, `web`,
-`health`), `scripts/`, `docker/`, `Jenkinsfile`, Flyway `V10`–`V19`.
+**You own:** `security/`, `user/`, `marketdata/`, `fx/`, `config/`, `web/`, `insights/`, `health/`, `scripts/`, `docker/`, `Jenkinsfile`, Flyway `V10`–`V19`.
 
 **Already merged:** Google sign-in and JIT user provisioning; correlation IDs; two market-data
 adapters behind the port; `CachingMarketDataService` with a `price_history` fallback;
@@ -24,7 +23,7 @@ misbehaves — and on a bank guest network it will — nothing the user sees bre
 
 ## D3-B1 · Scheduled price refresh — 1.5 h · 🔴
 
-`portfolio-platform/…/platform/marketdata/PriceRefreshScheduler.java`
+`marketdata/PriceRefreshScheduler.java`
 
 `@Scheduled` daily refresh writing into `price_history`, plus the service behind
 `POST /admin/prices/refresh` (Dev C exposes the endpoint; you provide the service).
@@ -47,7 +46,7 @@ rest. `PriceRefreshIT` — refreshing twice produces no duplicate rows.
 
 ## D3-B2 · Rate limiting and the circuit breaker — 2.0 h · 🔴
 
-`portfolio-platform/…/platform/marketdata/RateLimitedProvider.java`
+`marketdata/RateLimitedProvider.java`
 
 A decorator around any `MarketDataProvider`:
 
@@ -69,7 +68,7 @@ while open the provider is **not called** (verify with Mockito `never()`); it ha
 
 ## D3-B3 · FX refresh and on-demand historical backfill — 1.5 h · 🔴
 
-`portfolio-platform/…/platform/fx/FxRefreshScheduler.java`
+`fx/FxRefreshScheduler.java`
 
 - Daily refresh of the four currencies against the USD pivot.
 - **On-demand historical backfill:** Dev A's performance series will ask for a rate on a date we have never fetched. Fetch that range from Frankfurter, store it, and serve it. Fetch **once** — a second request for the same date must hit the database, not the provider.
@@ -83,7 +82,7 @@ calls the provider once; a provider failure falls back to last-good and reports 
 
 ## D3-B4 · Health indicators — 1.0 h
 
-`portfolio-platform/…/platform/health/`
+`health/`
 
 Custom indicators for `db`, `marketdata` and `fx`.
 
@@ -107,7 +106,7 @@ sell showing a clean 422) and the offline fallback moment.
 
 ## Rules
 
-- **`portfolio-common` is frozen.**
+- **`common/` is frozen.**
 - **No `double`, no `float`.** FX at scale 8, money at 4.
 - **No JPA, no Hibernate, no Spring Data. No `JdbcTemplate` outside a `*Repository`.**
 - **You may not edit `pom.xml`.** Ask Dev A — but note the whole point of D3-B2 is that you need no new dependency.
@@ -118,7 +117,7 @@ sell showing a clean 422) and the offline fallback moment.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-api/**` (Dev C) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `api/`, `graphql/` (Dev C) · `common/` ·
 any POM · migrations `V1`–`V9`, `V20`+.
 
 ---

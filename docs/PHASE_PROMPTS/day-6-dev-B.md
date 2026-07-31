@@ -6,7 +6,7 @@ You are **Dev B** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-platform`, `scripts/`, `services/insights/`, `docker/`, `Jenkinsfile`,
+**You own:** `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Java client), `scripts/`, `services/insights/` (Python), `docker/`, `Jenkinsfile`,
 Flyway `V10`–`V19`.
 
 **Status:** MVP Day 3. Docker, compose and a real green Jenkins pipeline Day 4. Insights
@@ -100,13 +100,13 @@ Have the Jenkins pipeline page and a terminal with `docker compose ps` open.
 ## Rules
 
 - **Feature freeze at 13:00.**
-- `portfolio-common` is frozen. Migrations only in `V10`–`V19`. **You may not edit `pom.xml`.**
+- `common/` is frozen. Migrations only in `V10`–`V19`. **You may not edit `pom.xml`.**
 - No `double`, no `float`. No JPA. No `JdbcTemplate` outside a `*Repository`.
 - **Do not refactor anything today.**
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-api/**` (Dev C) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `api/`, `graphql/` (Dev C) · `common/` ·
 any POM · migrations `V1`–`V9`, `V20`+.
 
 ---

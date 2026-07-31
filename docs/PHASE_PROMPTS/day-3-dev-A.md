@@ -6,7 +6,7 @@ You are **Dev A** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** all POMs, `portfolio-common` (frozen), `portfolio-core`, Flyway `V1`–`V9`.
+**You own:** the POM, `common/` (frozen), `support/`, `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, Flyway `V1`–`V9`.
 
 **Already merged:** `MoneyUtils`, enums, exceptions, the `MarketDataProvider` /
 `FxRateProvider` ports, `V1`/`V2`, `BaseRepository`, **`ProjectionEngine`** (the pure fold),
@@ -26,7 +26,7 @@ the portfolio and instrument controllers, and the API contract is frozen.
 
 ## D3-A1 · `TransactionService.record()` — 2.0 h · 🔴
 
-`portfolio-core/…/core/transaction/TransactionService.java`
+`transaction/TransactionService.java`
 
 The whole thing in **one `@Transactional`**, in this order:
 
@@ -69,7 +69,7 @@ portfolio. Plus: deleting a BUY that leaves a later SELL uncovered → 422 and f
 
 ## D3-A3 · `ValuationService` — 2.0 h · 🔴
 
-`portfolio-core/…/core/valuation/ValuationService.java`
+`valuation/ValuationService.java`
 
 Run **the same `ProjectionEngine`** a second time, in base-currency mode: target =
 `portfolio.base_currency`, FX resolved **at each transaction's date**. Nothing is persisted.
@@ -86,9 +86,10 @@ totalValue    = marketValue + cashBalance
 them is the currency P&L, and reporting it correctly is the point of ADR-0011. Converting cost
 basis at today's rate would silently erase most of the return on a mostly-foreign portfolio.
 
-Call Dev B's services through the **ports in `portfolio-common`**. `portfolio-core` cannot
-import `portfolio-platform` — if you find yourself wanting to, the interface belongs in `common`
-and `common` is frozen, so raise it in the channel.
+Call Dev B's services through the **ports in `common/`**, not by importing `marketdata`/`fx`
+classes directly — nothing stops that from compiling since ADR-0012, but it is still wrong. If
+you find yourself wanting to, the interface belongs in `common` and `common` is frozen, so raise
+it in the channel.
 
 Surface `priceAsOf` and `rateAsOf` on the result. Dev C renders them as `dataQuality`.
 
@@ -107,7 +108,7 @@ change, no stored row changes.
 
 ## D3-A4 · `PerformanceService` — 1.5 h · 🔴
 
-`portfolio-core/…/core/valuation/PerformanceService.java`
+`valuation/PerformanceService.java`
 
 **Three flat queries, then one in-memory fold.** Not SQL. Read
 `/docs/DECISIONS/0010-performance-series-in-java.md` before writing a line — this decision is
@@ -138,8 +139,9 @@ omitted; `from > to` → 400; range over 5 years → 400; three-currency portfol
 
 ## Rules
 
-- **`portfolio-common` is frozen.** Changes need team agreement.
-- `portfolio-core` must not import `portfolio-platform`. Use the ports.
+- **`common/` is frozen.** Changes need team agreement.
+- Domain code must not import `marketdata`/`fx` directly. Use the ports. Not compiler-checked
+  since ADR-0012 — review it.
 - No `double`, no `float`. `compareTo`, never `equals`. All rounding via `MoneyUtils`.
 - No JPA, no Hibernate, no Spring Data. No `JdbcTemplate` outside a `*Repository`.
 - **The projection is written in the same DB transaction as the `txn` row.** Never two transactions, never async.
@@ -147,7 +149,7 @@ omitted; `from > to` → 400; range over 5 years → 400; three-currency portfol
 
 ## Do not touch
 
-`portfolio-platform/**` (Dev B) · `portfolio-api/**` (Dev C) · migrations `V10`+ · frontend.
+`config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `api/`, `graphql/` (Dev C) · migrations `V10`+ · frontend.
 
 ---
 

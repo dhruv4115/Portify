@@ -6,7 +6,7 @@ You are **Dev A** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** all POMs, `portfolio-common` (frozen), `portfolio-core`, Flyway `V1`–`V9`.
+**You own:** the POM, `common/` (frozen), `support/`, `instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, Flyway `V1`–`V9`.
 
 **Status:** MVP shipped Day 3. Edge cases, concurrency, the coverage gate and allocation
 shipped Day 4. Docker, compose and a real green Jenkins pipeline shipped Day 4.
@@ -34,7 +34,7 @@ common way projects like this fail, and today is when it happens.
 
 ## D5-A1 · `AnalyticsService` — 3.0 h · 🟢
 
-`portfolio-core/…/core/valuation/AnalyticsService.java`
+`valuation/AnalyticsService.java`
 
 Built on the performance series you already have:
 
@@ -62,7 +62,7 @@ mistake for correctness, because every number looks plausible.
 
 ## D5-A2 · `portfolio_valuation_daily` materialisation — 2.0 h · 🟢
 
-`portfolio-core/…/core/valuation/ValuationSnapshotService.java`
+`valuation/ValuationSnapshotService.java`
 
 The table already exists in `V1__baseline.sql` and has been unused all week. Use it as a
 **cache over** the fold, never as the source of truth:
@@ -100,7 +100,8 @@ endpoint exceeds 500 ms.
 
 ## Rules
 
-- **`portfolio-common` is frozen.** `portfolio-core` must not import `portfolio-platform`.
+- **`common/` is frozen.** Domain code must not import `marketdata`/`fx` directly — use the
+  ports. Not compiler-checked since ADR-0012; the ArchUnit rule from Day 4 is the real guard now.
 - No `double`, no `float`. `compareTo`, never `equals`. Rounding through `MoneyUtils`.
 - No JPA, no Hibernate, no Spring Data. No `JdbcTemplate` outside a `*Repository`.
 - Migrations only in `V1`–`V9`, only new ones.
@@ -109,7 +110,7 @@ endpoint exceeds 500 ms.
 
 ## Do not touch
 
-`portfolio-platform/**` (Dev B) · `portfolio-api/**` (Dev C) · migrations `V10`+ · frontend.
+`config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `api/`, `graphql/` (Dev C) · migrations `V10`+ · frontend.
 
 ---
 

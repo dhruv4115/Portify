@@ -6,7 +6,7 @@ You are **Dev C** on a three-person team building **Protify**, a Portfolio Manag
 (Java 21, Spring Boot 3.5.16, MySQL 8.4, `NamedParameterJdbcTemplate` — **no JPA**) plus a
 React frontend. Base package `com.protify.portfolio`.
 
-**You own:** `portfolio-api` (controllers, `dto/`, `mapper/`, `error/`, `graphql/`), GitHub
+**You own:** `api/` (controllers, `dto/`, `mapper/`, `error/`) and `graphql/`, GitHub
 Actions, Flyway `V20`–`V29`, and most frontend work.
 
 **Already merged:** Google sign-in; `GET /me`; `GlobalExceptionHandler` with RFC 9457
@@ -24,7 +24,7 @@ week — freezing the API contract.
 
 ## D2-C1 · The DTO layer — 1.5 h · 🔴 **do this first, it unblocks everything**
 
-`portfolio-api/…/api/dto/`
+`api/dto/`
 
 All `record`s with Bean Validation. `MoneyDto` is the one every other DTO uses:
 
@@ -59,7 +59,7 @@ total is in the portfolio's **base** currency. `/docs/API_CONTRACT.md` §0.3.
 
 ## D2-C2 · `PortfolioController` — 2.0 h · 🔴
 
-`portfolio-api/…/api/portfolio/PortfolioController.java` + `api/mapper/PortfolioMapper.java`
+`api/portfolio/PortfolioController.java` + `api/mapper/PortfolioMapper.java`
 
 | | | |
 |---|---|---|
@@ -128,14 +128,14 @@ In `protify-frontend`:
 - **No business logic in a controller.** Validate, delegate, map.
 - **All errors through `GlobalExceptionHandler`.** Never `try/catch` returning a `ResponseEntity`.
 - **No `double`, no `float`.** Money is `BigDecimal` in Java, a **string** in JSON.
-- **`portfolio-common` is frozen.**
+- **`common/` is frozen.**
 - **You may not edit `pom.xml`.** Ask Dev A.
 - Status codes exactly per `/docs/API_CONTRACT.md` §0.7.
 - Every user-scoped call passes `userId`.
 
 ## Do not touch
 
-`portfolio-core/**` (Dev A) · `portfolio-platform/**` (Dev B) · `portfolio-common/**` ·
+`instrument/`, `portfolio/`, `transaction/`, `holding/`, `valuation/`, `support/` (Dev A) · `config/`, `security/`, `user/`, `marketdata/`, `fx/`, `insights/` (Dev B) · `common/` ·
 any POM · migrations `V1`–`V19`.
 
 ---
