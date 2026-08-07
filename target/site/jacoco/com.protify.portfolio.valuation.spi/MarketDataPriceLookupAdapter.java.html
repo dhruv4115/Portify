@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MarketDataPriceLookupAdapter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation.spi</a> &gt; <span class="el_source">MarketDataPriceLookupAdapter.java</span></div><h1>MarketDataPriceLookupAdapter.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation.spi;
+
+import com.protify.portfolio.marketdata.CachingMarketDataService;
+import com.protify.portfolio.marketdata.PriceHistoryRepository;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Optional;
+import org.springframework.stereotype.Component;
+
+/**
+ * The single, audited seam between the valuation layer and Dev B's {@code marketdata} package.
+ * {@code ArchitectureTest#coreMustNotDependOnPlatform} exempts {@code *Adapter} precisely so
+ * that this coupling is one grep away from being reviewed, rather than spread through the
+ * business logic — which is what it was before Day 4.
+ *
+ * &lt;p&gt;Nothing but translation happens here. Both fallback chains (Caffeine → provider →
+ * {@code price_history} → seed) live behind {@link CachingMarketDataService}; adding a decision
+ * to this class would put untested logic in the one place the architecture rule cannot see.
+ */
+@Component
+class MarketDataPriceLookupAdapter implements PriceLookup {
+
+    private final CachingMarketDataService marketDataService;
+    private final PriceHistoryRepository priceHistoryRepository;
+
+    MarketDataPriceLookupAdapter(CachingMarketDataService marketDataService,
+<span class="fc" id="L30">            PriceHistoryRepository priceHistoryRepository) {</span>
+<span class="fc" id="L31">        this.marketDataService = marketDataService;</span>
+<span class="fc" id="L32">        this.priceHistoryRepository = priceHistoryRepository;</span>
+<span class="fc" id="L33">    }</span>
+
+    @Override
+    public Optional&lt;PricePoint&gt; priceOn(long instrumentId, LocalDate date) {
+<span class="fc" id="L37">        return marketDataService.priceFor(instrumentId, date)</span>
+<span class="fc" id="L38">                .map(result -&gt; new PricePoint(result.price(), result.currency(), result.asOf()));</span>
+    }
+
+    @Override
+    public Map&lt;Long, NavigableMap&lt;LocalDate, BigDecimal&gt;&gt; seriesUpTo(Collection&lt;Long&gt; instrumentIds, LocalDate to) {
+<span class="fc" id="L43">        return priceHistoryRepository.findRange(instrumentIds, to);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

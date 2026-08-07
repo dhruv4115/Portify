@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PerformanceMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.mapper</a> &gt; <span class="el_source">PerformanceMapper.java</span></div><h1>PerformanceMapper.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.mapper;
+
+import com.protify.portfolio.api.dto.DataQualityDto;
+import com.protify.portfolio.api.dto.MoneyDto;
+import com.protify.portfolio.api.dto.PerformanceInterval;
+import com.protify.portfolio.api.dto.PerformancePointDto;
+import com.protify.portfolio.api.dto.PerformanceResponse;
+import com.protify.portfolio.api.dto.PerformanceSummaryDto;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.valuation.PerformancePoint;
+import com.protify.portfolio.valuation.PerformanceResult;
+import com.protify.portfolio.valuation.PerformanceSummary;
+import java.util.List;
+import org.springframework.stereotype.Component;
+
+/**
+ * Explicit, hand-written mapping — no MapStruct, no reflection.
+ *
+ * &lt;p&gt;{@code points} is passed in separately from {@code result} because the caller may have
+ * sampled it down to a weekly or monthly series; {@code summary} is always
+ * {@link PerformanceResult}'s own, computed over the full daily series, so {@code startValue}
+ * stays the value at the start of the requested window rather than the value at the end of the
+ * first week.
+ *
+ * &lt;p&gt;{@code stale} is {@link PerformanceResult#stale()} passed through — see
+ * {@link ValuationMapper} for why this layer does not second-guess it.
+ */
+@Component
+<span class="fc" id="L29">public class PerformanceMapper {</span>
+
+    public PerformanceResponse toResponse(PerformanceResult result, List&lt;PerformancePoint&gt; points,
+            PerformanceInterval interval) {
+<span class="fc" id="L33">        CurrencyCode currency = result.currency();</span>
+<span class="fc" id="L34">        return new PerformanceResponse(</span>
+<span class="fc" id="L35">                result.portfolioId(),</span>
+                currency,
+<span class="fc" id="L37">                result.from(),</span>
+<span class="fc" id="L38">                result.to(),</span>
+                interval,
+<span class="fc" id="L40">                points.stream().map(point -&gt; toDto(point, currency)).toList(),</span>
+<span class="fc" id="L41">                toDto(result.summary(), currency),</span>
+<span class="fc" id="L42">                new DataQualityDto(result.priceAsOf(), result.rateAsOf(), result.stale()));</span>
+    }
+
+    private static PerformancePointDto toDto(PerformancePoint point, CurrencyCode currency) {
+<span class="fc" id="L46">        return new PerformancePointDto(</span>
+<span class="fc" id="L47">                point.date(),</span>
+<span class="fc" id="L48">                MoneyDto.of(point.marketValue(), currency),</span>
+<span class="fc" id="L49">                MoneyDto.of(point.costBasis(), currency),</span>
+<span class="fc" id="L50">                MoneyDto.of(point.cashBalance(), currency),</span>
+<span class="fc" id="L51">                MoneyDto.of(point.totalValue(), currency),</span>
+<span class="fc" id="L52">                MoneyDto.of(point.unrealisedPnl(), currency),</span>
+<span class="fc" id="L53">                point.filled());</span>
+    }
+
+    private static PerformanceSummaryDto toDto(PerformanceSummary summary, CurrencyCode currency) {
+<span class="fc" id="L57">        return new PerformanceSummaryDto(</span>
+<span class="fc" id="L58">                MoneyDto.of(summary.startValue(), currency),</span>
+<span class="fc" id="L59">                MoneyDto.of(summary.endValue(), currency),</span>
+<span class="fc" id="L60">                MoneyDto.of(summary.absoluteChange(), currency),</span>
+                // null when the window opened at zero — not Infinity and not 0 (§4.2)
+<span class="fc bfc" id="L62" title="All 2 branches covered.">                summary.percentChange() == null ? null : summary.percentChange().toPlainString(),</span>
+<span class="fc" id="L63">                MoneyDto.of(summary.netContributions(), currency));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

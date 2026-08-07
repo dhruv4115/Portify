@@ -1,0 +1,313 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PerformanceService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">PerformanceService.java</span></div><h1>PerformanceService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.error.ValidationException;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.instrument.Instrument;
+import com.protify.portfolio.instrument.InstrumentRepository;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.transaction.Txn;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.valuation.spi.FxConversion;
+import com.protify.portfolio.valuation.spi.PriceLookup;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Set;
+import org.springframework.stereotype.Service;
+
+/**
+ * day-3-dev-A.md D3-A4 — {@code portfolios/{id}/performance}. ADR-0010's three flat queries plus
+ * one in-memory merge-walk: never a recursive-CTE / {@code LATERAL} join, so an off-by-one on a
+ * boundary date is a breakpoint away, not a query plan. Two of those three queries arrive
+ * through the {@link PriceLookup}/{@link FxConversion} ports rather than by importing Dev B's
+ * repositories directly (day-4-dev-A.md D4-A1). Only {@code DAILY} granularity is built
+ * — {@code WEEKLY}/{@code MONTHLY} is PLAN.md §9 descope rung 4, and Day 3's estimate assumes
+ * it's cut.
+ *
+ * &lt;p&gt;Reuses {@link ValuationFolder}'s {@link ValuationFolder.Accumulator} so the same
+ * cost-basis/cash maths that backs {@link ValuationService} backs the chart too (PLAN.md §5:
+ * &quot;one engine, three call sites&quot;) — advanced one day (and zero or more transactions) at a time
+ * instead of re-folded from scratch per point, which is what keeps this {@code O(days +
+ * transactions)} rather than {@code O(days × transactions)}.
+ */
+@Service
+public class PerformanceService {
+
+    private static final long MAX_RANGE_YEARS = 5;
+
+    private final PortfolioService portfolioService;
+    private final TransactionRepository transactionRepository;
+    private final InstrumentRepository instrumentRepository;
+    private final PriceLookup priceLookup;
+    private final FxConversion fxConversion;
+    private final ValuationSnapshotService snapshotService;
+
+    public PerformanceService(
+            PortfolioService portfolioService,
+            TransactionRepository transactionRepository,
+            InstrumentRepository instrumentRepository,
+            PriceLookup priceLookup,
+            FxConversion fxConversion,
+<span class="fc" id="L59">            ValuationSnapshotService snapshotService) {</span>
+<span class="fc" id="L60">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L61">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L62">        this.instrumentRepository = instrumentRepository;</span>
+<span class="fc" id="L63">        this.priceLookup = priceLookup;</span>
+<span class="fc" id="L64">        this.fxConversion = fxConversion;</span>
+<span class="fc" id="L65">        this.snapshotService = snapshotService;</span>
+<span class="fc" id="L66">    }</span>
+
+    public PerformanceResult getPerformance(long userId, long portfolioId, LocalDate from, LocalDate to, CurrencyCode requestedCurrency) {
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        if (from.isAfter(to)) {</span>
+<span class="fc" id="L70">            throw new ValidationException(&quot;invalid-date-range&quot;, &quot;from must not be after to.&quot;);</span>
+        }
+<span class="fc bfc" id="L72" title="All 2 branches covered.">        if (from.plusYears(MAX_RANGE_YEARS).isBefore(to)) {</span>
+<span class="fc" id="L73">            throw new ValidationException(&quot;invalid-date-range&quot;, &quot;Range must not exceed 5 years.&quot;);</span>
+        }
+
+<span class="fc" id="L76">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        CurrencyCode currency = requestedCurrency != null ? requestedCurrency : portfolio.baseCurrency();</span>
+
+<span class="fc" id="L79">        List&lt;Txn&gt; allTxns = transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId);</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        if (allTxns.isEmpty()) {</span>
+<span class="fc" id="L81">            return emptyResult(portfolioId, currency, from, to);</span>
+        }
+
+<span class="fc" id="L84">        LocalDate firstTxnDate = ValuationFolder.dateOf(allTxns.get(0));</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        LocalDate rangeStart = from.isAfter(firstTxnDate) ? from : firstTxnDate;</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">        if (rangeStart.isAfter(to)) {</span>
+<span class="fc" id="L87">            return emptyResult(portfolioId, currency, from, to);</span>
+        }
+
+<span class="fc" id="L90">        Set&lt;Long&gt; instrumentIds = new HashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        for (Txn txn : allTxns) {</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">            if (txn.instrumentId() != null) {</span>
+<span class="fc" id="L93">                instrumentIds.add(txn.instrumentId());</span>
+            }
+<span class="fc" id="L95">        }</span>
+<span class="fc" id="L96">        NavigableMap&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; fxTable = fxConversion.ratesUpTo(to);</span>
+
+        // The cache (day-5-dev-A.md D5-A2). Completed days only — today's close has not happened
+        // yet, so today is always folded live no matter what the table holds.
+<span class="fc" id="L100">        NavigableMap&lt;LocalDate, ValuationSnapshot&gt; cached =</span>
+<span class="fc" id="L101">                snapshotService.completedSnapshots(portfolioId, currency, rangeStart, to);</span>
+<span class="fc" id="L102">        boolean anyUncovered = anyDayUncovered(rangeStart, to, cached);</span>
+
+        // The price series is the expensive read: the whole of price_history for every instrument
+        // the portfolio has ever held, deliberately unbounded below (ADR-0010). A window that is
+        // entirely memoised skips it, and the instrument lookups with it — that, and not the
+        // arithmetic, is where a 365-day series gets its time back.
+        Map&lt;Long, NavigableMap&lt;LocalDate, BigDecimal&gt;&gt; prices =
+<span class="fc bfc" id="L109" title="All 2 branches covered.">                anyUncovered ? priceLookup.seriesUpTo(instrumentIds, to) : Map.of();</span>
+        // One IN query, not one findById per instrument (day-5-dev-A.md D5-A3's N+1 hunt).
+        Map&lt;Long, Instrument&gt; instruments =
+<span class="fc bfc" id="L112" title="All 2 branches covered.">                anyUncovered ? instrumentRepository.findAllByIds(instrumentIds) : Map.of();</span>
+
+<span class="fc" id="L114">        ProjectionContext.FxLookup tradeDateFx = (from2, on) -&gt; tradeDateRate(fxTable, from2, currency, on);</span>
+<span class="fc" id="L115">        ValuationFolder.Accumulator accumulator = new ValuationFolder.Accumulator();</span>
+
+<span class="fc" id="L117">        int cursor = 0;</span>
+<span class="fc bfc" id="L118" title="All 4 branches covered.">        while (cursor &lt; allTxns.size() &amp;&amp; ValuationFolder.dateOf(allTxns.get(cursor)).isBefore(rangeStart)) {</span>
+<span class="fc" id="L119">            accumulator.apply(allTxns.get(cursor), tradeDateFx);</span>
+<span class="fc" id="L120">            cursor++;</span>
+        }
+
+<span class="fc" id="L123">        List&lt;PerformancePoint&gt; points = new ArrayList&lt;&gt;();</span>
+        // Deposits minus withdrawals inside the reported window only — transfers before
+        // rangeStart are already inside the opening value and are not contributions to it.
+        // Shared with AnalyticsService, which needs the same flows broken down by date
+        // (day-5-dev-A.md D5-A1).
+<span class="fc" id="L128">        BigDecimal netContributions = CashFlowSeries.total(</span>
+<span class="fc" id="L129">                CashFlowSeries.byDate(allTxns, tradeDateFx, rangeStart, to));</span>
+<span class="fc" id="L130">        LocalDate lastPriceAsOf = null;</span>
+<span class="fc" id="L131">        LocalDate lastRateAsOf = null;</span>
+<span class="fc" id="L132">        boolean lastFilled = false;</span>
+
+        // Days the fold had to compute, handed back to the cache once the walk is done. Never a
+        // gap: a day with no snapshot is folded, not skipped.
+<span class="fc" id="L136">        List&lt;ValuationSnapshot&gt; toMemoise = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        for (LocalDate day = rangeStart; !day.isAfter(to); day = day.plusDays(1)) {</span>
+            // The accumulator advances over every day either way — it is O(transactions), not
+            // O(days), and the first uncovered day needs the positions the covered ones built.
+<span class="fc bfc" id="L141" title="All 4 branches covered.">            while (cursor &lt; allTxns.size() &amp;&amp; !ValuationFolder.dateOf(allTxns.get(cursor)).isAfter(day)) {</span>
+<span class="fc" id="L142">                accumulator.apply(allTxns.get(cursor), tradeDateFx);</span>
+<span class="fc" id="L143">                cursor++;</span>
+            }
+
+<span class="fc" id="L146">            ValuationSnapshot snapshot = cached.get(day);</span>
+<span class="fc bfc" id="L147" title="All 2 branches covered.">            if (snapshot != null) {</span>
+<span class="fc" id="L148">                points.add(snapshot.toPoint());</span>
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">                if (snapshot.priceAsOf() != null) {</span>
+<span class="fc" id="L150">                    lastPriceAsOf = snapshot.priceAsOf();</span>
+                }
+<span class="pc bpc" id="L152" title="1 of 2 branches missed.">                if (snapshot.rateAsOf() != null) {</span>
+<span class="fc" id="L153">                    lastRateAsOf = snapshot.rateAsOf();</span>
+                }
+<span class="fc" id="L155">                lastFilled = snapshot.filled();</span>
+<span class="fc" id="L156">                continue;</span>
+            }
+
+<span class="fc" id="L159">            DayValuation dayValuation = valueDay(accumulator.snapshot(), instruments, prices, fxTable, currency, day);</span>
+<span class="fc" id="L160">            points.add(dayValuation.point());</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">            if (dayValuation.priceAsOf() != null) {</span>
+<span class="fc" id="L162">                lastPriceAsOf = dayValuation.priceAsOf();</span>
+            }
+<span class="fc bfc" id="L164" title="All 2 branches covered.">            if (dayValuation.rateAsOf() != null) {</span>
+<span class="fc" id="L165">                lastRateAsOf = dayValuation.rateAsOf();</span>
+            }
+<span class="fc" id="L167">            lastFilled = dayValuation.point().filled();</span>
+
+<span class="fc bfc" id="L169" title="All 2 branches covered.">            if (snapshotService.isCompleted(day)) {</span>
+<span class="fc" id="L170">                toMemoise.add(ValuationSnapshot.of(portfolioId, currency, dayValuation.point(),</span>
+<span class="fc" id="L171">                        dayValuation.priceAsOf(), dayValuation.rateAsOf()));</span>
+            }
+        }
+<span class="fc" id="L174">        snapshotService.store(toMemoise);</span>
+
+<span class="fc" id="L176">        PerformanceSummary summary = summarize(points, netContributions);</span>
+<span class="fc" id="L177">        return new PerformanceResult(portfolioId, currency, from, to, points, summary, lastPriceAsOf, lastRateAsOf, lastFilled);</span>
+    }
+
+    /** {@code cached} only ever holds dates inside {@code [from, to]}, one per date, so counting
+     * is enough — no need to walk the calendar to find the first hole. */
+    private static boolean anyDayUncovered(LocalDate from, LocalDate to,
+            NavigableMap&lt;LocalDate, ValuationSnapshot&gt; cached) {
+<span class="fc bfc" id="L184" title="All 2 branches covered.">        return cached.size() &lt; ChronoUnit.DAYS.between(from, to) + 1;</span>
+    }
+
+<span class="fc" id="L187">    private record DayValuation(PerformancePoint point, LocalDate priceAsOf, LocalDate rateAsOf) {</span>
+    }
+
+    private DayValuation valueDay(
+            ValuationFolder.Snapshot snapshot,
+            Map&lt;Long, Instrument&gt; instruments,
+            Map&lt;Long, NavigableMap&lt;LocalDate, BigDecimal&gt;&gt; prices,
+            NavigableMap&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; fxTable,
+            CurrencyCode currency,
+            LocalDate day) {
+
+<span class="fc" id="L198">        BigDecimal marketValueSum = BigDecimal.ZERO;</span>
+<span class="fc" id="L199">        BigDecimal costBasisSum = BigDecimal.ZERO;</span>
+<span class="fc" id="L200">        boolean filled = false;</span>
+<span class="fc" id="L201">        LocalDate priceAsOf = null;</span>
+<span class="fc" id="L202">        LocalDate rateAsOf = null;</span>
+
+<span class="fc" id="L204">        Map.Entry&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; fxEntry = fxTable.floorEntry(day);</span>
+
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        for (Map.Entry&lt;Long, ValuationFolder.InstrumentPosition&gt; entry : snapshot.positions().entrySet()) {</span>
+<span class="fc" id="L207">            ValuationFolder.InstrumentPosition position = entry.getValue();</span>
+<span class="fc bfc" id="L208" title="All 2 branches covered.">            if (position.quantity().signum() &lt;= 0) {</span>
+<span class="fc" id="L209">                continue;</span>
+            }
+<span class="fc" id="L211">            costBasisSum = costBasisSum.add(position.costBasis());</span>
+
+<span class="fc" id="L213">            Instrument instrument = instruments.get(entry.getKey());</span>
+<span class="fc" id="L214">            NavigableMap&lt;LocalDate, BigDecimal&gt; priceSeries = prices.get(entry.getKey());</span>
+<span class="pc bpc" id="L215" title="2 of 4 branches missed.">            if (instrument == null || priceSeries == null) {</span>
+<span class="nc" id="L216">                continue;</span>
+            }
+<span class="fc" id="L218">            Map.Entry&lt;LocalDate, BigDecimal&gt; priceEntry = priceSeries.floorEntry(day);</span>
+<span class="pc bpc" id="L219" title="1 of 2 branches missed.">            if (priceEntry == null) {</span>
+<span class="nc" id="L220">                continue;</span>
+            }
+<span class="fc bfc" id="L222" title="All 2 branches covered.">            if (priceEntry.getKey().isBefore(day)) {</span>
+<span class="fc" id="L223">                filled = true;</span>
+            }
+<span class="fc" id="L225">            priceAsOf = earlierOf(priceAsOf, priceEntry.getKey());</span>
+
+            BigDecimal rate;
+<span class="fc bfc" id="L228" title="All 2 branches covered.">            if (instrument.currency() == currency) {</span>
+                // Identity conversion needs no fx_rate row and is never forward-filled.
+<span class="fc" id="L230">                rate = BigDecimal.ONE;</span>
+<span class="fc" id="L231">                rateAsOf = earlierOf(rateAsOf, day);</span>
+            } else {
+<span class="fc bfc" id="L233" title="All 2 branches covered.">                if (fxEntry == null) {</span>
+<span class="fc" id="L234">                    continue;</span>
+                }
+<span class="fc" id="L236">                rate = crossRate(fxEntry.getValue(), instrument.currency(), currency);</span>
+<span class="fc bfc" id="L237" title="All 2 branches covered.">                if (rate == null) {</span>
+<span class="fc" id="L238">                    continue;</span>
+                }
+<span class="fc bfc" id="L240" title="All 2 branches covered.">                if (fxEntry.getKey().isBefore(day)) {</span>
+<span class="fc" id="L241">                    filled = true;</span>
+                }
+<span class="fc" id="L243">                rateAsOf = earlierOf(rateAsOf, fxEntry.getKey());</span>
+            }
+
+<span class="fc" id="L246">            BigDecimal nativeMarketValue = position.quantity().multiply(priceEntry.getValue());</span>
+<span class="fc" id="L247">            marketValueSum = marketValueSum.add(nativeMarketValue.multiply(rate));</span>
+<span class="fc" id="L248">        }</span>
+
+<span class="fc" id="L250">        BigDecimal cashBalance = snapshot.cashBalance();</span>
+<span class="fc" id="L251">        BigDecimal marketValue = MoneyUtils.money(marketValueSum);</span>
+<span class="fc" id="L252">        BigDecimal costBasis = MoneyUtils.money(costBasisSum);</span>
+<span class="fc" id="L253">        BigDecimal totalValue = MoneyUtils.money(marketValue.add(cashBalance));</span>
+<span class="fc" id="L254">        BigDecimal unrealisedPnl = MoneyUtils.money(marketValue.subtract(costBasis));</span>
+
+<span class="fc" id="L256">        PerformancePoint point = new PerformancePoint(day, marketValue, costBasis, cashBalance, totalValue, unrealisedPnl, filled);</span>
+<span class="fc" id="L257">        return new DayValuation(point, priceAsOf, rateAsOf);</span>
+    }
+
+    private PerformanceSummary summarize(List&lt;PerformancePoint&gt; points, BigDecimal netContributions) {
+<span class="fc bfc" id="L261" title="All 2 branches covered.">        if (points.isEmpty()) {</span>
+<span class="fc" id="L262">            return new PerformanceSummary(MoneyUtils.money(BigDecimal.ZERO), MoneyUtils.money(BigDecimal.ZERO),</span>
+<span class="fc" id="L263">                    MoneyUtils.money(BigDecimal.ZERO), null, MoneyUtils.money(netContributions));</span>
+        }
+<span class="fc" id="L265">        BigDecimal start = points.get(0).totalValue();</span>
+<span class="fc" id="L266">        BigDecimal end = points.get(points.size() - 1).totalValue();</span>
+<span class="fc" id="L267">        BigDecimal change = MoneyUtils.money(end.subtract(start));</span>
+<span class="fc" id="L268">        BigDecimal pct = MoneyUtils.pctChange(start, end);</span>
+<span class="fc" id="L269">        return new PerformanceSummary(start, end, change, pct, MoneyUtils.money(netContributions));</span>
+    }
+
+    private PerformanceResult emptyResult(long portfolioId, CurrencyCode currency, LocalDate from, LocalDate to) {
+<span class="fc" id="L273">        return new PerformanceResult(portfolioId, currency, from, to, List.of(), summarize(List.of(), BigDecimal.ZERO),</span>
+                null, null, false);
+    }
+
+    /** Trade-date FX for the accumulator and net-contributions maths — never {@code null}
+     * (the {@link ProjectionContext.FxLookup} contract), so an unresolvable rate falls back to
+     * identity rather than corrupting the running cash/cost-basis totals. */
+    private static BigDecimal tradeDateRate(
+            NavigableMap&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; fxTable, CurrencyCode from, CurrencyCode to, LocalDate date) {
+<span class="fc" id="L282">        Map.Entry&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; entry = fxTable.floorEntry(date);</span>
+<span class="fc bfc" id="L283" title="All 2 branches covered.">        if (entry == null) {</span>
+<span class="fc" id="L284">            return BigDecimal.ONE;</span>
+        }
+<span class="fc" id="L286">        BigDecimal rate = crossRate(entry.getValue(), from, to);</span>
+<span class="fc bfc" id="L287" title="All 2 branches covered.">        return rate == null ? BigDecimal.ONE : rate;</span>
+    }
+
+    /** {@code ratesOnDate} is USD-pivot (&quot;USD → quote&quot;); {@code cross(from→to) = rate(USD→to) /
+     * rate(USD→from)} (ADR-0011). {@code null} when a currency's rate is missing that day —
+     * callers decide the fallback, since a market-value contribution should be skipped rather
+     * than defaulted to 1, unlike a cash-flow conversion. */
+    private static BigDecimal crossRate(Map&lt;CurrencyCode, BigDecimal&gt; ratesOnDate, CurrencyCode from, CurrencyCode to) {
+<span class="fc bfc" id="L295" title="All 2 branches covered.">        if (from == to) {</span>
+<span class="fc" id="L296">            return BigDecimal.ONE;</span>
+        }
+<span class="fc bfc" id="L298" title="All 2 branches covered.">        BigDecimal fromRate = from == CurrencyCode.USD ? BigDecimal.ONE : ratesOnDate.get(from);</span>
+<span class="fc bfc" id="L299" title="All 2 branches covered.">        BigDecimal toRate = to == CurrencyCode.USD ? BigDecimal.ONE : ratesOnDate.get(to);</span>
+<span class="pc bpc" id="L300" title="1 of 4 branches missed.">        if (fromRate == null || toRate == null) {</span>
+<span class="fc" id="L301">            return null;</span>
+        }
+<span class="fc" id="L303">        return MoneyUtils.fxRate(toRate.divide(fromRate, 16, MoneyUtils.ROUNDING));</span>
+    }
+
+    private static LocalDate earlierOf(LocalDate a, LocalDate b) {
+<span class="fc bfc" id="L307" title="All 2 branches covered.">        if (a == null) {</span>
+<span class="fc" id="L308">            return b;</span>
+        }
+<span class="fc bfc" id="L310" title="All 2 branches covered.">        return a.isBefore(b) ? a : b;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

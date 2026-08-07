@@ -1,0 +1,162 @@
+# day-5-dev-C.md D5-C1 — read-only in v1. Mutations stay on REST, where the transactional and
+# Location-header semantics live. Every resolver calls the same api/-layer services as the REST
+# controllers (never a repository directly), so an authorisation bug cannot exist in one API and
+# not the other.
+#
+# Another user's portfolio resolves to null here, never an error — the GraphQL equivalent of
+# REST's 404 (API_CONTRACT.md's "never 403" rule applies identically).
+type Query {
+    "Null when the portfolio does not exist or belongs to another user — never an error."
+    portfolio(id: ID!): Portfolio
+}
+
+type Portfolio {
+    id: ID!
+    name: String!
+    baseCurrency: CurrencyCode!
+    holdingCount: Int!
+    marketValue: Money
+    costBasis: Money
+    cashBalance: Money
+    totalValue: Money
+    unrealisedPnl: Money
+    realisedPnl: Money
+    unrealisedPnlPct: String
+    dataQuality: DataQuality!
+    createdAt: DateTime!
+    updatedAt: DateTime!
+
+    """
+    The four-section dashboard query: holdings + performance + allocation alongside the
+    portfolio totals above, all in this one round trip — REST costs four requests for the same
+    data.
+    """
+    holdings(currency: CurrencyCode, includeZero: Boolean): [Holding!]!
+    performance(from: Date, to: Date, interval: PerformanceInterval, currency: CurrencyCode): Performance
+    allocation(by: AllocationDimension, currency: CurrencyCode): Allocation
+}
+
+type Holding {
+    instrument: Instrument!
+    quantity: String!
+    "Native currency (the instrument's own trading currency), not the portfolio's base one."
+    avgCost: Money
+    lastPrice: Money
+    marketValue: Money
+    costBasis: Money
+    unrealisedPnl: Money
+    unrealisedPnlPct: String
+    realisedPnl: Money
+    weightPct: String!
+    fxRate: String
+    dataQuality: DataQuality!
+}
+
+type Instrument {
+    id: ID!
+    symbol: String!
+    name: String!
+    assetType: AssetType!
+    currency: CurrencyCode!
+    exchange: String
+    sector: String
+}
+
+type Performance {
+    portfolioId: ID!
+    currency: CurrencyCode!
+    from: Date!
+    to: Date!
+    interval: PerformanceInterval!
+    points: [PerformancePoint!]!
+    summary: PerformanceSummary!
+    dataQuality: DataQuality!
+}
+
+type PerformancePoint {
+    date: Date!
+    marketValue: Money
+    costBasis: Money
+    cashBalance: Money
+    totalValue: Money
+    unrealisedPnl: Money
+    "True when this day's price or FX rate was carried forward from an earlier date."
+    filled: Boolean!
+}
+
+type PerformanceSummary {
+    startValue: Money!
+    endValue: Money!
+    absoluteChange: Money!
+    percentChange: String
+    netContributions: Money!
+}
+
+type Allocation {
+    portfolioId: ID!
+    by: AllocationDimension!
+    currency: CurrencyCode!
+    "Sum of holding market values only — cash is excluded, same rule as REST §13."
+    total: Money!
+    slices: [AllocationSlice!]!
+    dataQuality: DataQuality!
+}
+
+type AllocationSlice {
+    key: String!
+    label: String!
+    value: Money!
+    weightPct: String!
+    instrumentCount: Int!
+}
+
+"""
+amount is always a decimal string, never a number — same reason as REST §0.2: a bare JSON
+number is an IEEE-754 double in every GraphQL client too.
+"""
+type Money {
+    amount: String!
+    currency: CurrencyCode!
+}
+
+type DataQuality {
+    priceAsOf: Date
+    rateAsOf: Date
+    stale: Boolean!
+}
+
+enum CurrencyCode {
+    USD
+    EUR
+    GBP
+    INR
+}
+
+enum AssetType {
+    STOCK
+    ETF
+    MUTUAL_FUND
+    BOND
+    TREASURY
+    CASH
+    CRYPTO
+}
+
+enum AllocationDimension {
+    ASSET_TYPE
+    SECTOR
+    CURRENCY
+    INSTRUMENT
+}
+
+enum PerformanceInterval {
+    DAILY
+    WEEKLY
+    MONTHLY
+}
+
+"ISO-8601 calendar date, e.g. 2026-06-15."
+scalar Date
+
+"ISO-8601 instant, e.g. 2026-06-15T10:15:30Z."
+scalar DateTime

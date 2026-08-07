@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.protify.portfolio.api.valuation.PerformanceControllerTest
+-------------------------------------------------------------------------------
+Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.608 s -- in com.protify.portfolio.api.valuation.PerformanceControllerTest

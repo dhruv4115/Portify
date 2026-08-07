@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InsightsClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.insights</a> &gt; <span class="el_source">InsightsClient.java</span></div><h1>InsightsClient.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.insights;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * D5-B2 — the Java side of the insights feature. Behind {@code FEATURES_INSIGHTS_ENABLED}
+ * (default {@code false}): when disabled, {@link #generate} never makes a network call at all
+ * and returns the Java rule-based fallback directly — Dev C's future controller checks
+ * {@link #isEnabled()} to answer {@code 501} instead of ever calling this class, but this class
+ * is safe to call either way (defence in depth, the same &quot;degrade, never break&quot; pattern as
+ * {@code CachingMarketDataService}/{@code CachingFxRateService}).
+ *
+ * &lt;p&gt;On any failure once enabled — timeout, connection refused, non-2xx, malformed body — this
+ * falls back to a rule-based summary generated in Java (not just the Python service's own
+ * rule-based path): the whole feature degrades twice before a caller ever sees a failure.
+ * &lt;b&gt;Never throws, never returns null, never a 500.&lt;/b&gt;
+ */
+@Component
+public class InsightsClient {
+
+<span class="fc" id="L28">    private static final Logger log = LoggerFactory.getLogger(InsightsClient.class);</span>
+    private static final int TIMEOUT_MILLIS = 2000;
+
+    private final boolean enabled;
+    private final RestClient restClient;
+
+    @Autowired
+    public InsightsClient(@Value(&quot;${features.insights.enabled:false}&quot;) boolean enabled,
+                           @Value(&quot;${insights.service.url:http://localhost:8000}&quot;) String serviceUrl) {
+<span class="fc" id="L37">        this(enabled, defaultRestClient(serviceUrl));</span>
+<span class="fc" id="L38">    }</span>
+
+    /** Test-only seam: inject a {@link RestClient} pointed at a {@link
+     * org.springframework.test.web.client.MockRestServiceServer} or an unreachable URL. */
+<span class="fc" id="L42">    InsightsClient(boolean enabled, RestClient restClient) {</span>
+<span class="fc" id="L43">        this.enabled = enabled;</span>
+<span class="fc" id="L44">        this.restClient = restClient;</span>
+<span class="fc" id="L45">    }</span>
+
+    private static RestClient defaultRestClient(String serviceUrl) {
+<span class="fc" id="L48">        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();</span>
+<span class="fc" id="L49">        factory.setConnectTimeout(TIMEOUT_MILLIS);</span>
+<span class="fc" id="L50">        factory.setReadTimeout(TIMEOUT_MILLIS);</span>
+<span class="fc" id="L51">        return RestClient.builder().baseUrl(serviceUrl).requestFactory(factory).build();</span>
+    }
+
+    /** Whether the feature is turned on at all — Dev C's controller uses this to decide
+     * {@code 501} vs. calling {@link #generate}; API_CONTRACT.md §18. */
+    public boolean isEnabled() {
+<span class="fc" id="L57">        return enabled;</span>
+    }
+
+    /**
+     * Never throws. Flag off, or any failure calling the Python service, both resolve to a
+     * Java-generated rule-based {@link InsightsResult} with {@link Engine#RULE_BASED}.
+     */
+    public InsightsResult generate(PortfolioSummary summary, String horizon, String tone) {
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        if (!enabled) {</span>
+<span class="fc" id="L66">            return RuleBasedInsights.generate(summary);</span>
+        }
+
+        try {
+<span class="fc" id="L70">            InsightsResult result = restClient.post()</span>
+<span class="fc" id="L71">                    .uri(&quot;/insights&quot;)</span>
+<span class="fc" id="L72">                    .body(new InsightsRequest(summary, horizon, tone))</span>
+<span class="fc" id="L73">                    .retrieve()</span>
+<span class="fc" id="L74">                    .body(InsightsResult.class);</span>
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">            if (result != null) {</span>
+<span class="fc" id="L76">                return result;</span>
+            }
+<span class="nc" id="L78">            log.warn(&quot;Insights service returned an empty body; falling back to rule-based&quot;);</span>
+<span class="fc" id="L79">        } catch (RestClientException e) {</span>
+<span class="fc" id="L80">            log.warn(&quot;Insights service call failed: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L81">        }</span>
+<span class="fc" id="L82">        return RuleBasedInsights.generate(summary);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

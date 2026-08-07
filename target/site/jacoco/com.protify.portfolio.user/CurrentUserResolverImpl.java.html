@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CurrentUserResolverImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.user</a> &gt; <span class="el_source">CurrentUserResolverImpl.java</span></div><h1>CurrentUserResolverImpl.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.user;
+
+import com.protify.portfolio.api.user.CurrentUser;
+import com.protify.portfolio.api.user.CurrentUserResolver;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
+import org.springframework.stereotype.Component;
+import org.springframework.web.context.annotation.RequestScope;
+
+/**
+ * D1-B2 — the real {@link CurrentUserResolver}: reads the validated {@link Jwt} from the
+ * security context, looks up (or JIT-provisions on first sight) the {@code app_user} row, and
+ * exposes it as {@link CurrentUser}. Request-scoped, per the interface's contract (the seam
+ * {@code api.user.PlaceholderCurrentUserResolver} stood in for) — a fresh resolution per
+ * request, safe to constructor-inject into singleton controllers via Spring's scoped proxy.
+ *
+ * &lt;p&gt;The Google {@code sub} never reaches a repository beyond {@link AppUserRepository}'s
+ * lookup; everything downstream of this class uses the internal {@code userId}
+ * ({@link CurrentUser#id()}), never {@code sub}.
+ *
+ * &lt;p&gt;Assumes {@code email_verified: false} has already been rejected upstream with 403 — see
+ * {@code EmailVerifiedFilter}, which runs for every authenticated request before a controller
+ * (and therefore before this resolver) is ever reached.
+ */
+@Component
+@RequestScope
+public class CurrentUserResolverImpl implements CurrentUserResolver {
+
+<span class="fc" id="L34">    private static final Logger log = LoggerFactory.getLogger(CurrentUserResolverImpl.class);</span>
+
+    private final AppUserRepository appUserRepository;
+
+<span class="fc" id="L38">    public CurrentUserResolverImpl(AppUserRepository appUserRepository) {</span>
+<span class="fc" id="L39">        this.appUserRepository = appUserRepository;</span>
+<span class="fc" id="L40">    }</span>
+
+    @Override
+    public CurrentUser resolve() {
+<span class="fc" id="L44">        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">        if (!(authentication instanceof JwtAuthenticationToken jwtAuth)) {</span>
+<span class="fc" id="L46">            throw new IllegalStateException(</span>
+                    &quot;CurrentUserResolver.resolve() called outside an authenticated request; every &quot;
+                            + &quot;endpoint that injects it must sit behind SecurityConfig's \&quot;authenticated\&quot; rule&quot;);
+        }
+
+<span class="fc" id="L51">        AppUser appUser = resolveAppUser(jwtAuth.getToken());</span>
+<span class="fc" id="L52">        return new CurrentUser(appUser.id(), appUser.email(), appUser.displayName(),</span>
+<span class="fc" id="L53">                appUser.pictureUrl(), appUser.createdAt());</span>
+    }
+
+    private AppUser resolveAppUser(Jwt jwt) {
+<span class="fc" id="L57">        String googleSub = jwt.getSubject();</span>
+<span class="fc" id="L58">        return appUserRepository.findByGoogleSub(googleSub)</span>
+<span class="fc" id="L59">                .orElseGet(() -&gt; provisionNewUser(jwt, googleSub));</span>
+    }
+
+    private AppUser provisionNewUser(Jwt jwt, String googleSub) {
+<span class="fc" id="L63">        String email = jwt.getClaimAsString(&quot;email&quot;);</span>
+<span class="fc" id="L64">        String displayName = jwt.getClaimAsString(&quot;name&quot;);</span>
+<span class="fc" id="L65">        String pictureUrl = jwt.getClaimAsString(&quot;picture&quot;);</span>
+
+        try {
+<span class="fc" id="L68">            AppUser created = appUserRepository.insert(googleSub, email, displayName, pictureUrl);</span>
+<span class="fc" id="L69">            log.info(&quot;Provisioned new app_user {} on first sign-in&quot;, created.id());</span>
+<span class="fc" id="L70">            return created;</span>
+<span class="fc" id="L71">        } catch (DuplicateKeyException raceLost) {</span>
+            // Two simultaneous first-sign-in requests for the same new sub: exactly one insert
+            // wins, the other re-reads the winner's row. Never a second row, never a failure.
+<span class="fc" id="L74">            log.debug(&quot;Lost the concurrent first-sign-in race; re-reading the row the other request created&quot;);</span>
+<span class="fc" id="L75">            return appUserRepository.findByGoogleSub(googleSub)</span>
+<span class="pc" id="L76">                    .orElseThrow(() -&gt; new IllegalStateException(</span>
+                            &quot;app_user row missing immediately after a unique-constraint conflict on google_sub&quot;));
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,144 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationService.java</span></div><h1>ValuationService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.error.ValidationException;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.transaction.Txn;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.valuation.spi.FxConversion;
+import com.protify.portfolio.valuation.spi.PriceLookup;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.stereotype.Service;
+
+/**
+ * day-3-dev-A.md D3-A3 — {@code portfolios/{id}/valuation}. Runs {@link ValuationFolder} (the
+ * base-currency cost-basis fold, ADR-0011) over the transaction history up to {@code asOf}, then
+ * prices each open position through {@link PositionPricer}, which is shared with
+ * {@link AllocationService} so the two can never disagree about what a holding is worth.
+ * That pricer reaches Dev B's market data and FX only through the {@code valuation/spi}
+ * ports — see {@link PriceLookup} for why they are declared there rather than in the frozen
+ * {@code common} package (day-4-dev-A.md D4-A1).
+ *
+ * &lt;p&gt;Market value uses the FX rate &lt;b&gt;on {@code asOf}&lt;/b&gt;; cost basis (inside the fold) uses the
+ * rate on each transaction's own date. That difference is the currency P&amp;L (ADR-0011) — using
+ * today's rate for both would erase it.
+ */
+@Service
+public class ValuationService {
+
+    private final PortfolioService portfolioService;
+    private final TransactionRepository transactionRepository;
+    private final PositionPricer positionPricer;
+    private final FxConversion fxConversion;
+
+    public ValuationService(
+            PortfolioService portfolioService,
+            TransactionRepository transactionRepository,
+            PositionPricer positionPricer,
+<span class="fc" id="L46">            FxConversion fxConversion) {</span>
+<span class="fc" id="L47">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L48">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L49">        this.positionPricer = positionPricer;</span>
+<span class="fc" id="L50">        this.fxConversion = fxConversion;</span>
+<span class="fc" id="L51">    }</span>
+
+    public ValuationResult valuate(long userId, long portfolioId, LocalDate asOf, CurrencyCode requestedCurrency) {
+<span class="fc" id="L54">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">        CurrencyCode currency = requestedCurrency != null ? requestedCurrency : portfolio.baseCurrency();</span>
+
+<span class="fc" id="L57">        List&lt;Txn&gt; allTxns = transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId);</span>
+<span class="fc bfc" id="L58" title="All 2 branches covered.">        if (!allTxns.isEmpty()) {</span>
+<span class="fc" id="L59">            LocalDate firstTxnDate = ValuationFolder.dateOf(allTxns.get(0));</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">            if (asOf.isBefore(firstTxnDate)) {</span>
+<span class="fc" id="L61">                throw new ValidationException(&quot;invalid-date-range&quot;,</span>
+<span class="fc" id="L62">                        &quot;asOf %s is before the portfolio's first transaction on %s.&quot;.formatted(asOf, firstTxnDate));</span>
+            }
+        }
+
+<span class="pc bpc" id="L66" title="1 of 2 branches missed.">        List&lt;Txn&gt; upToAsOf = allTxns.stream().filter(t -&gt; !ValuationFolder.dateOf(t).isAfter(asOf)).toList();</span>
+<span class="fc" id="L67">        ValuationFolder.Snapshot snapshot = ValuationFolder.fold(upToAsOf, tradeDateFxLookup(currency));</span>
+
+<span class="fc" id="L69">        Accumulated acc = new Accumulated();</span>
+<span class="fc" id="L70">        Map&lt;Long, BigDecimal&gt; openQuantities = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">        for (Map.Entry&lt;Long, ValuationFolder.InstrumentPosition&gt; entry : snapshot.positions().entrySet()) {</span>
+            // Realised P&amp;L survives a position being sold down to zero, so it accumulates over
+            // every position; only the open ones get priced.
+<span class="fc" id="L74">            acc.realisedPnl = acc.realisedPnl.add(entry.getValue().realisedPnl());</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">            if (entry.getValue().quantity().signum() &gt; 0) {</span>
+<span class="fc" id="L76">                openQuantities.put(entry.getKey(), entry.getValue().quantity());</span>
+            }
+<span class="fc" id="L78">        }</span>
+
+        // One instrument query for the whole portfolio rather than one per position (D5-A3).
+<span class="fc" id="L81">        Map&lt;Long, PositionPricer.Priced&gt; priced = positionPricer.priceAll(openQuantities, currency, asOf);</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        for (Long instrumentId : openQuantities.keySet()) {</span>
+<span class="fc" id="L83">            priceOpenPosition(snapshot.positions().get(instrumentId), priced.get(instrumentId), asOf, acc);</span>
+<span class="fc" id="L84">        }</span>
+
+<span class="fc bfc" id="L86" title="All 4 branches covered.">        BigDecimal marketValue = (acc.openPositions &gt; 0 &amp;&amp; !acc.anyPriced) ? null : MoneyUtils.money(acc.marketValue);</span>
+<span class="fc" id="L87">        BigDecimal costBasis = MoneyUtils.money(acc.costBasis);</span>
+<span class="fc" id="L88">        BigDecimal cashBalance = snapshot.cashBalance();</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        BigDecimal totalValue = marketValue == null ? null : MoneyUtils.money(marketValue.add(cashBalance));</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        BigDecimal unrealisedPnl = marketValue == null ? null : MoneyUtils.money(marketValue.subtract(costBasis));</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        BigDecimal unrealisedPnlPct = marketValue == null ? null : MoneyUtils.pctChange(costBasis, marketValue);</span>
+<span class="fc" id="L92">        BigDecimal realisedPnl = MoneyUtils.money(acc.realisedPnl);</span>
+
+<span class="fc" id="L94">        return new ValuationResult(portfolioId, asOf, currency, marketValue, costBasis, cashBalance,</span>
+                totalValue, unrealisedPnl, realisedPnl, unrealisedPnlPct, acc.openPositions,
+                acc.priceAsOf, acc.rateAsOf, acc.stale);
+    }
+
+    /** {@code value} is {@code null} when the position could not be priced at all — an unknown
+     * instrument, no price anywhere, or no resolvable rate. That degrades the response to
+     * {@code stale}; it never blanks the portfolio (TEST_PLAN.md §4.3). */
+    private void priceOpenPosition(ValuationFolder.InstrumentPosition position,
+            PositionPricer.Priced value, LocalDate asOf, Accumulated acc) {
+<span class="fc" id="L104">        acc.openPositions++;</span>
+<span class="fc" id="L105">        acc.costBasis = acc.costBasis.add(position.costBasis());</span>
+
+<span class="fc bfc" id="L107" title="All 2 branches covered.">        if (value == null) {</span>
+<span class="fc" id="L108">            acc.stale = true;</span>
+<span class="fc" id="L109">            return;</span>
+        }
+<span class="fc" id="L111">        acc.marketValue = acc.marketValue.add(value.marketValue());</span>
+<span class="fc" id="L112">        acc.anyPriced = true;</span>
+<span class="fc bfc" id="L113" title="All 4 branches covered.">        if (!value.priceAsOf().equals(asOf) || !value.rateAsOf().equals(asOf)) {</span>
+<span class="fc" id="L114">            acc.stale = true;</span>
+        }
+<span class="fc" id="L116">        acc.priceAsOf = earlierOf(acc.priceAsOf, value.priceAsOf());</span>
+<span class="fc" id="L117">        acc.rateAsOf = earlierOf(acc.rateAsOf, value.rateAsOf());</span>
+<span class="fc" id="L118">    }</span>
+
+    private ProjectionContext.FxLookup tradeDateFxLookup(CurrencyCode target) {
+<span class="fc" id="L121">        return (from, on) -&gt; fxConversion.rate(from, target, on).orElse(BigDecimal.ONE);</span>
+    }
+
+    private static LocalDate earlierOf(LocalDate a, LocalDate b) {
+<span class="fc bfc" id="L125" title="All 2 branches covered.">        if (a == null) {</span>
+<span class="fc" id="L126">            return b;</span>
+        }
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        return a.isBefore(b) ? a : b;</span>
+    }
+
+    /** Loop-scoped running totals — a private mutable holder beats five separate local
+     * variables threaded through a helper method. */
+<span class="fc" id="L133">    private static final class Accumulated {</span>
+<span class="fc" id="L134">        BigDecimal marketValue = BigDecimal.ZERO;</span>
+<span class="fc" id="L135">        BigDecimal costBasis = BigDecimal.ZERO;</span>
+<span class="fc" id="L136">        BigDecimal realisedPnl = BigDecimal.ZERO;</span>
+<span class="fc" id="L137">        int openPositions = 0;</span>
+<span class="fc" id="L138">        boolean anyPriced = false;</span>
+<span class="fc" id="L139">        boolean stale = false;</span>
+<span class="fc" id="L140">        LocalDate priceAsOf = null;</span>
+<span class="fc" id="L141">        LocalDate rateAsOf = null;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

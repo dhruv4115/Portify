@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FxRateRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.fx</a> &gt; <span class="el_source">FxRateRepository.java</span></div><h1>FxRateRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.fx;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.enums.FxSource;
+import com.protify.portfolio.support.BaseRepository;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.TreeMap;
+
+/**
+ * D2-B3 — {@code fx_rate} stores one row per currency per day against a **USD pivot**
+ * (ADR-0011): {@code base_ccy} is always {@code USD}, {@code quote_ccy} the other currency.
+ * Storing pairs directly would be O(n²) rows for no gain. Upsert via
+ * {@code INSERT ... ON DUPLICATE KEY UPDATE} on {@code (base_ccy, quote_ccy, rate_date)},
+ * through {@link BaseRepository}.
+ */
+@Repository
+public class FxRateRepository extends BaseRepository {
+
+<span class="fc" id="L28">    private static final FxRateRowMapper ROW_MAPPER = new FxRateRowMapper();</span>
+
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public FxRateRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L33">        super(jdbcTemplate);</span>
+<span class="fc" id="L34">        this.jdbc = jdbcTemplate;</span>
+<span class="fc" id="L35">    }</span>
+
+    /** Most recent row on or before {@code onOrBefore} for the given pivot pair — never a
+     * future rate (a future rate invents history). */
+    public Optional&lt;FxRateRow&gt; mostRecentOnOrBefore(CurrencyCode base, CurrencyCode quote, LocalDate onOrBefore) {
+<span class="fc" id="L40">        String sql = &quot;&quot;&quot;</span>
+                SELECT base_ccy, quote_ccy, rate_date, rate, source
+                FROM fx_rate
+                WHERE base_ccy = :base AND quote_ccy = :quote AND rate_date &lt;= :onOrBefore
+                ORDER BY rate_date DESC
+                LIMIT 1
+                &quot;&quot;&quot;;
+<span class="fc" id="L47">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L48">                .addValue(&quot;base&quot;, base.name())</span>
+<span class="fc" id="L49">                .addValue(&quot;quote&quot;, quote.name())</span>
+<span class="fc" id="L50">                .addValue(&quot;onOrBefore&quot;, onOrBefore);</span>
+<span class="fc" id="L51">        return jdbc.query(sql, params, ROW_MAPPER).stream().findFirst();</span>
+    }
+
+    /** D3-B3 — exact-date lookup, distinct from {@link #mostRecentOnOrBefore}: used to decide
+     * whether a date has ever actually been fetched, so a provider is called at most once per
+     * date rather than on every cache expiry. */
+    public Optional&lt;FxRateRow&gt; findExact(CurrencyCode base, CurrencyCode quote, LocalDate date) {
+<span class="fc" id="L58">        String sql = &quot;&quot;&quot;</span>
+                SELECT base_ccy, quote_ccy, rate_date, rate, source
+                FROM fx_rate
+                WHERE base_ccy = :base AND quote_ccy = :quote AND rate_date = :date
+                &quot;&quot;&quot;;
+<span class="fc" id="L63">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L64">                .addValue(&quot;base&quot;, base.name())</span>
+<span class="fc" id="L65">                .addValue(&quot;quote&quot;, quote.name())</span>
+<span class="fc" id="L66">                .addValue(&quot;date&quot;, date);</span>
+<span class="fc" id="L67">        return jdbc.query(sql, params, ROW_MAPPER).stream().findFirst();</span>
+    }
+
+    /** D3-B4 — {@code FxHealthIndicator} needs only the date of the most recent row, not the
+     * full (package-private) {@link FxRateRow} — this is the public-facing shape a health
+     * indicator in another package can actually call. */
+    public Optional&lt;LocalDate&gt; mostRecentDateOnOrBefore(CurrencyCode base, CurrencyCode quote, LocalDate onOrBefore) {
+<span class="fc" id="L74">        return mostRecentOnOrBefore(base, quote, onOrBefore).map(FxRateRow::rateDate);</span>
+    }
+
+    /**
+     * ADR-0010 — one of the &quot;three flat queries&quot; {@code PerformanceService} folds in memory:
+     * every stored (USD-pivot) rate up to {@code to}, grouped by date. No lower bound, for the
+     * same reason as {@link com.protify.portfolio.marketdata.PriceHistoryRepository#findRange}
+     * — the fold needs the row before the range to forward-fill its first day. {@code USD}
+     * itself never appears as a {@code quoteCcy} key since it is never stored against itself
+     * (rate is always 1 by definition); callers treat a {@code USD} lookup as 1 directly.
+     */
+    public NavigableMap&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; findRange(LocalDate to) {
+<span class="fc" id="L86">        NavigableMap&lt;LocalDate, Map&lt;CurrencyCode, BigDecimal&gt;&gt; result = new TreeMap&lt;&gt;();</span>
+<span class="fc" id="L87">        String sql = &quot;&quot;&quot;</span>
+                SELECT quote_ccy, rate_date, rate
+                FROM fx_rate
+                WHERE base_ccy = 'USD' AND rate_date &lt;= :to
+                &quot;&quot;&quot;;
+<span class="fc" id="L92">        MapSqlParameterSource params = new MapSqlParameterSource().addValue(&quot;to&quot;, to);</span>
+<span class="fc" id="L93">        jdbc.query(sql, params, rs -&gt; {</span>
+<span class="fc" id="L94">            CurrencyCode quote = CurrencyCode.fromDbValue(rs.getString(&quot;quote_ccy&quot;)).orElse(null);</span>
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">            if (quote == null) {</span>
+<span class="nc" id="L96">                return;</span>
+            }
+<span class="fc" id="L98">            LocalDate date = rs.getDate(&quot;rate_date&quot;).toLocalDate();</span>
+<span class="fc" id="L99">            BigDecimal rate = rs.getBigDecimal(&quot;rate&quot;);</span>
+<span class="fc" id="L100">            result.computeIfAbsent(date, k -&gt; new HashMap&lt;&gt;()).put(quote, rate);</span>
+<span class="fc" id="L101">        });</span>
+<span class="fc" id="L102">        return result;</span>
+    }
+
+    public void upsert(CurrencyCode base, CurrencyCode quote, LocalDate rateDate, BigDecimal rate, FxSource source) {
+<span class="fc" id="L106">        String sql = &quot;&quot;&quot;</span>
+                INSERT INTO fx_rate (base_ccy, quote_ccy, rate_date, rate, source)
+                VALUES (:base, :quote, :rateDate, :rate, :source)
+                ON DUPLICATE KEY UPDATE
+                    rate = VALUES(rate),
+                    source = VALUES(source),
+                    fetched_at = CURRENT_TIMESTAMP(6)
+                &quot;&quot;&quot;;
+<span class="fc" id="L114">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L115">                .addValue(&quot;base&quot;, base.name())</span>
+<span class="fc" id="L116">                .addValue(&quot;quote&quot;, quote.name())</span>
+<span class="fc" id="L117">                .addValue(&quot;rateDate&quot;, rateDate)</span>
+<span class="fc" id="L118">                .addValue(&quot;rate&quot;, rate)</span>
+<span class="fc" id="L119">                .addValue(&quot;source&quot;, source.name());</span>
+<span class="fc" id="L120">        upsert(sql, params);</span>
+<span class="fc" id="L121">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

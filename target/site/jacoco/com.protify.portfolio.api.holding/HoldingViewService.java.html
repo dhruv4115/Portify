@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HoldingViewService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.holding</a> &gt; <span class="el_source">HoldingViewService.java</span></div><h1>HoldingViewService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.holding;
+
+import com.protify.portfolio.api.dto.HoldingResponse;
+import com.protify.portfolio.api.mapper.HoldingMapper;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.port.FxQuote;
+import com.protify.portfolio.fx.CachingFxRateService;
+import com.protify.portfolio.holding.Holding;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.instrument.Instrument;
+import com.protify.portfolio.instrument.InstrumentRepository;
+import com.protify.portfolio.marketdata.CachingMarketDataService;
+import com.protify.portfolio.marketdata.PriceResult;
+import com.protify.portfolio.holding.HoldingRepository;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.valuation.ValuationFolder;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+/**
+ * The customer's &quot;browse&quot; (day-3-dev-C.md D3-C2), API_CONTRACT.md §10. Three sources, each
+ * authoritative for a different column, which is the whole reason this class exists rather than a
+ * single repository call:
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code holding} — {@code quantity} and {@code avgCost}, native and never converted
+ *       (CLAUDE.md non-negotiable #13)&lt;/li&gt;
+ *   &lt;li&gt;{@link ValuationFolder} over the transaction history — {@code costBasis} and
+ *       {@code realisedPnl} in the target currency at each trade's &lt;em&gt;own&lt;/em&gt; FX rate, which is
+ *       what separates currency P&amp;amp;L from market P&amp;amp;L (ADR-0011). Reused rather than
+ *       reimplemented so this endpoint and {@code /valuation} cannot disagree on cost basis.&lt;/li&gt;
+ *   &lt;li&gt;Dev B's caching services — {@code lastPrice} (native) and the {@code asOf} rate used to
+ *       express market value in the target currency&lt;/li&gt;
+ * &lt;/ul&gt;
+ *
+ * &lt;p&gt;A position that cannot be priced yields {@code null} money fields and a stale
+ * {@code dataQuality} rather than an error: one unpriceable instrument must not blank the
+ * portfolio (TEST_PLAN.md §4.3). Every path resolves the portfolio through
+ * {@link PortfolioService#getOrThrow} first, so another user's is a 404, never a 403.
+ */
+@Service
+public class HoldingViewService {
+
+<span class="fc" id="L53">    private static final Logger log = LoggerFactory.getLogger(HoldingViewService.class);</span>
+
+    private final PortfolioService portfolioService;
+    private final HoldingRepository holdingRepository;
+    private final TransactionRepository transactionRepository;
+    private final InstrumentRepository instrumentRepository;
+    private final CachingMarketDataService marketDataService;
+    private final CachingFxRateService fxRateService;
+    private final HoldingMapper holdingMapper;
+
+    public HoldingViewService(
+            PortfolioService portfolioService,
+            HoldingRepository holdingRepository,
+            TransactionRepository transactionRepository,
+            InstrumentRepository instrumentRepository,
+            CachingMarketDataService marketDataService,
+            CachingFxRateService fxRateService,
+<span class="fc" id="L70">            HoldingMapper holdingMapper) {</span>
+<span class="fc" id="L71">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L72">        this.holdingRepository = holdingRepository;</span>
+<span class="fc" id="L73">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L74">        this.instrumentRepository = instrumentRepository;</span>
+<span class="fc" id="L75">        this.marketDataService = marketDataService;</span>
+<span class="fc" id="L76">        this.fxRateService = fxRateService;</span>
+<span class="fc" id="L77">        this.holdingMapper = holdingMapper;</span>
+<span class="fc" id="L78">    }</span>
+
+    /**
+     * @param requestedCurrency presentation override; {@code null} means the portfolio's base
+     *                          currency. Nothing stored changes either way (§10).
+     * @param includeZero       {@code true} keeps positions sold down to zero, which the
+     *                          projection deliberately retains so their realised P&amp;amp;L survives
+     */
+    public List&lt;HoldingResponse&gt; list(long userId, long portfolioId, CurrencyCode requestedCurrency,
+            boolean includeZero) {
+<span class="fc" id="L88">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        CurrencyCode currency = requestedCurrency != null ? requestedCurrency : portfolio.baseCurrency();</span>
+<span class="fc" id="L90">        LocalDate asOf = LocalDate.now(ZoneOffset.UTC);</span>
+
+<span class="fc" id="L92">        List&lt;Holding&gt; holdings = holdingRepository.findByPortfolio(portfolioId);</span>
+<span class="fc bfc" id="L93" title="All 2 branches covered.">        if (holdings.isEmpty()) {</span>
+            // 200 [], never a 404 — an empty portfolio is a normal answer (TEST_PLAN.md §4.9).
+<span class="fc" id="L95">            return List.of();</span>
+        }
+
+<span class="fc" id="L98">        ValuationFolder.Snapshot snapshot = ValuationFolder.fold(</span>
+<span class="fc" id="L99">                transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId), tradeDateFx(currency));</span>
+
+<span class="fc" id="L101">        List&lt;HoldingValuation&gt; valued = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">        for (Holding holding : holdings) {</span>
+<span class="fc" id="L103">            value(holding, snapshot, currency, asOf).ifPresent(valued::add);</span>
+<span class="fc" id="L104">        }</span>
+
+        // Weights are a share of the whole portfolio, so the total is taken before the
+        // includeZero filter — a closed position contributes nothing to it anyway.
+<span class="fc" id="L108">        BigDecimal totalMarketValue = valued.stream()</span>
+<span class="fc" id="L109">                .map(HoldingValuation::marketValue)</span>
+<span class="fc" id="L110">                .filter(java.util.Objects::nonNull)</span>
+<span class="fc" id="L111">                .reduce(BigDecimal.ZERO, BigDecimal::add);</span>
+
+<span class="fc" id="L113">        return valued.stream()</span>
+<span class="fc bfc" id="L114" title="All 4 branches covered.">                .filter(v -&gt; includeZero || v.holding().quantity().signum() != 0)</span>
+<span class="fc" id="L115">                .map(v -&gt; holdingMapper.toResponse(v, totalMarketValue, currency, asOf))</span>
+<span class="fc" id="L116">                .toList();</span>
+    }
+
+    private Optional&lt;HoldingValuation&gt; value(Holding holding, ValuationFolder.Snapshot snapshot,
+            CurrencyCode currency, LocalDate asOf) {
+<span class="fc" id="L121">        Optional&lt;Instrument&gt; instrument = instrumentRepository.findById(holding.instrumentId());</span>
+<span class="pc bpc" id="L122" title="1 of 2 branches missed.">        if (instrument.isEmpty()) {</span>
+            // A holding whose instrument row has vanished cannot be rendered at all; dropping the
+            // row beats failing the whole response, and the log is how anyone finds out.
+<span class="nc" id="L125">            log.warn(&quot;Holding {} references unknown instrument {}&quot;, holding.id(), holding.instrumentId());</span>
+<span class="nc" id="L126">            return Optional.empty();</span>
+        }
+
+<span class="fc" id="L129">        ValuationFolder.InstrumentPosition position = snapshot.positions().get(holding.instrumentId());</span>
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        BigDecimal costBasis = position == null ? BigDecimal.ZERO : position.costBasis();</span>
+<span class="pc bpc" id="L131" title="1 of 2 branches missed.">        BigDecimal realisedPnl = position == null ? BigDecimal.ZERO : position.realisedPnl();</span>
+
+<span class="fc" id="L133">        Optional&lt;PriceResult&gt; price = marketDataService.priceFor(holding.instrumentId(), asOf);</span>
+<span class="fc" id="L134">        Optional&lt;FxQuote&gt; fx = fxRateService.rate(instrument.get().currency(), currency, asOf);</span>
+
+<span class="pc bpc" id="L136" title="1 of 4 branches missed.">        BigDecimal marketValue = (price.isPresent() &amp;&amp; fx.isPresent())</span>
+<span class="fc" id="L137">                ? holding.quantity().multiply(price.get().price()).multiply(fx.get().rate())</span>
+<span class="fc" id="L138">                : null;</span>
+
+<span class="fc" id="L140">        return Optional.of(new HoldingValuation(</span>
+                holding,
+<span class="fc" id="L142">                instrument.get(),</span>
+<span class="fc" id="L143">                price.map(PriceResult::price).orElse(null),</span>
+                marketValue,
+                costBasis,
+                realisedPnl,
+<span class="fc" id="L147">                fx.map(FxQuote::rate).orElse(null),</span>
+<span class="fc" id="L148">                price.map(PriceResult::asOf).orElse(null),</span>
+<span class="fc" id="L149">                fx.map(FxQuote::date).orElse(null)));</span>
+    }
+
+    /** Cost basis is folded at each transaction's own rate, never today's — that difference is
+     * the currency P&amp;amp;L (ADR-0011). Identity on an unresolvable rate, matching the
+     * {@link ProjectionContext.FxLookup} contract that it never returns {@code null}. */
+    private ProjectionContext.FxLookup tradeDateFx(CurrencyCode target) {
+<span class="fc" id="L156">        return (from, on) -&gt; fxRateService.rate(from, target, on)</span>
+<span class="fc" id="L157">                .map(FxQuote::rate)</span>
+<span class="fc" id="L158">                .orElse(BigDecimal.ONE);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AllocationResult.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">AllocationResult.java</span></div><h1>AllocationResult.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+
+/**
+ * API_CONTRACT.md §13's fields, computed rather than transported — Dev C's mapper turns
+ * {@code priceAsOf}/{@code rateAsOf}/{@code stale} into a {@code DataQualityDto}.
+ *
+ * &lt;p&gt;{@code total} is the sum of the slices, which is &lt;b&gt;market value only&lt;/b&gt;.
+ * {@code cashBalance} is reported alongside and is deliberately not part of it: cash has no
+ * asset type, no sector and no issuer, so including it would distort every weight while
+ * answering no question the chart is asking.
+ */
+<span class="fc" id="L17">public record AllocationResult(</span>
+        long portfolioId,
+        AllocateBy by,
+        CurrencyCode currency,
+        LocalDate asOf,
+        BigDecimal total,
+        BigDecimal cashBalance,
+        List&lt;AllocationSlice&gt; slices,
+        LocalDate priceAsOf,
+        LocalDate rateAsOf,
+        boolean stale) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

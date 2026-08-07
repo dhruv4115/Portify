@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InsufficientQuantityException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.common.error</a> &gt; <span class="el_source">InsufficientQuantityException.java</span></div><h1>InsufficientQuantityException.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.common.error;
+
+import java.math.BigDecimal;
+import org.springframework.http.HttpStatus;
+
+/**
+ * Thrown when a SELL exceeds the current holding. Carries {@code symbol}, {@code requested}
+ * and {@code held} so the message is specific — &quot;Cannot sell 50 of AAPL; holding is 20.&quot; —
+ * rather than a generic &quot;insufficient quantity&quot;.
+ */
+public final class InsufficientQuantityException extends DomainException {
+
+    private final String symbol;
+    private final BigDecimal requested;
+    private final BigDecimal held;
+
+    public InsufficientQuantityException(String symbol, BigDecimal requested, BigDecimal held) {
+<span class="fc" id="L18">        super(&quot;Cannot sell %s of %s; holding is %s.&quot;.formatted(</span>
+<span class="fc" id="L19">                plain(requested), symbol, plain(held)));</span>
+<span class="fc" id="L20">        this.symbol = symbol;</span>
+<span class="fc" id="L21">        this.requested = requested;</span>
+<span class="fc" id="L22">        this.held = held;</span>
+<span class="fc" id="L23">    }</span>
+
+    private static String plain(BigDecimal v) {
+<span class="fc" id="L26">        return v.stripTrailingZeros().toPlainString();</span>
+    }
+
+    public String symbol() {
+<span class="fc" id="L30">        return symbol;</span>
+    }
+
+    public BigDecimal requested() {
+<span class="fc" id="L34">        return requested;</span>
+    }
+
+    public BigDecimal held() {
+<span class="fc" id="L38">        return held;</span>
+    }
+
+    @Override
+    public String problemType() {
+<span class="fc" id="L43">        return &quot;/errors/insufficient-quantity&quot;;</span>
+    }
+
+    @Override
+    public HttpStatus status() {
+<span class="fc" id="L48">        return HttpStatus.UNPROCESSABLE_ENTITY;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

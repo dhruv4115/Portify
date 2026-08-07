@@ -1,0 +1,181 @@
+/**
+ * Motion vocabulary. Every animation in the app is one of these — nothing defines its own
+ * keyframes inline, so timing and personality stay consistent as the app grows.
+ *
+ * <p>Durations are short on purpose (140–420ms). Anything slower reads as lag rather than polish
+ * on a dashboard people open several times a day.
+ */
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rise-in-sm {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.9) translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--brand-ring);
+  }
+  70% {
+    box-shadow: 0 0 0 8px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes count-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes draw-line {
+  from {
+    stroke-dashoffset: var(--dash, 1200);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes bar-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@utility animate-fade-in {
+  animation: fade-in 0.28s var(--ease-out-soft) both;
+}
+
+@utility animate-rise-in {
+  animation: rise-in 0.38s var(--ease-out-soft) both;
+}
+
+@utility animate-rise-in-sm {
+  animation: rise-in-sm 0.24s var(--ease-out-soft) both;
+}
+
+@utility animate-scale-in {
+  animation: scale-in 0.24s var(--ease-out-soft) both;
+}
+
+@utility animate-pop-in {
+  animation: pop-in 0.28s var(--ease-spring) both;
+}
+
+@utility animate-slide-down {
+  animation: slide-down 0.18s var(--ease-out-soft) both;
+}
+
+@utility animate-slide-in-right {
+  animation: slide-in-right 0.32s var(--ease-out-soft) both;
+}
+
+@utility animate-count-up {
+  animation: count-up 0.5s var(--ease-out-soft) both;
+}
+
+/**
+ * Staggered entrances. A dashboard that reveals every card at the same instant looks like a
+ * page load; one that reveals them 40ms apart reads as composed. Capped at 12 so a long list
+ * never delays its tail by seconds.
+ */
+@utility stagger-* {
+  animation-delay: calc(--value(integer) * 40ms);
+}

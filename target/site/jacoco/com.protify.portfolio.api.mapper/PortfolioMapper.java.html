@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PortfolioMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.mapper</a> &gt; <span class="el_source">PortfolioMapper.java</span></div><h1>PortfolioMapper.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.mapper;
+
+import com.protify.portfolio.api.dto.MoneyDto;
+import com.protify.portfolio.api.dto.PortfolioResponse;
+import com.protify.portfolio.api.portfolio.PortfolioSummary;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.portfolio.Portfolio;
+import java.math.BigDecimal;
+import org.springframework.stereotype.Component;
+
+/**
+ * Explicit, hand-written mapping — no MapStruct, no reflection (day-2-dev-C.md D2-C2).
+ * Persistence type ({@link Portfolio}) in, DTO out; {@link PortfolioSummary} is the valuation
+ * seam (day-4-dev-C.md: backed for real by {@code ValuationService} since Day 4), not a
+ * persistence type.
+ *
+ * &lt;p&gt;{@code marketValue}/{@code totalValue}/{@code unrealisedPnl} stay {@code null} when
+ * {@link PortfolioSummary} reports them {@code null} — that means at least one open position
+ * exists and none of them could be priced; substituting zero would report the portfolio as
+ * worthless rather than as unpriced (same rule as {@code ValuationMapper}).
+ */
+@Component
+<span class="fc" id="L23">public class PortfolioMapper {</span>
+
+    public PortfolioResponse toResponse(Portfolio portfolio, PortfolioSummary summary) {
+<span class="fc" id="L26">        var currency = portfolio.baseCurrency();</span>
+<span class="fc" id="L27">        BigDecimal marketValue = summary.marketValue();</span>
+<span class="fc" id="L28">        BigDecimal cashBalance = summary.cashBalance();</span>
+<span class="pc bpc" id="L29" title="2 of 4 branches missed.">        BigDecimal totalValue = (marketValue == null || cashBalance == null)</span>
+<span class="nc" id="L30">                ? null</span>
+<span class="fc" id="L31">                : marketValue.add(cashBalance);</span>
+
+<span class="fc" id="L33">        return new PortfolioResponse(</span>
+<span class="fc" id="L34">                portfolio.id(),</span>
+<span class="fc" id="L35">                portfolio.name(),</span>
+                currency,
+<span class="fc" id="L37">                summary.holdingCount(),</span>
+<span class="fc" id="L38">                money(marketValue, currency),</span>
+<span class="fc" id="L39">                money(summary.costBasis(), currency),</span>
+<span class="fc" id="L40">                money(cashBalance, currency),</span>
+<span class="fc" id="L41">                money(totalValue, currency),</span>
+<span class="fc" id="L42">                money(summary.unrealisedPnl(), currency),</span>
+<span class="fc" id="L43">                money(summary.realisedPnl(), currency),</span>
+<span class="fc" id="L44">                summary.unrealisedPnlPct(),</span>
+<span class="fc" id="L45">                summary.dataQuality(),</span>
+<span class="fc" id="L46">                portfolio.createdAt(),</span>
+<span class="fc" id="L47">                portfolio.updatedAt());</span>
+    }
+
+    private static MoneyDto money(BigDecimal amount, CurrencyCode currency) {
+<span class="pc bpc" id="L51" title="1 of 2 branches missed.">        return amount == null ? null : MoneyDto.of(amount, currency);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

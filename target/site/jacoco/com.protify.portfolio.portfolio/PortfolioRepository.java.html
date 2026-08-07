@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PortfolioRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.portfolio</a> &gt; <span class="el_source">PortfolioRepository.java</span></div><h1>PortfolioRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.portfolio;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.support.BaseRepository;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Every method takes {@code userId} first and every statement filters by it
+ * (CLAUDE.md non-negotiable #3) — a method that *could* return another user's row is a bug
+ * even if nothing calls it that way today.
+ *
+ * &lt;p&gt;{@link #create} does not pre-check for a duplicate name with a {@code SELECT}, which
+ * races; it relies on the {@code uk_portfolio_user_name} constraint and lets Spring's
+ * automatic exception translation surface a {@link org.springframework.dao.DuplicateKeyException}
+ * to the caller.
+ */
+@Repository
+public class PortfolioRepository extends BaseRepository {
+
+    public PortfolioRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L27">        super(jdbcTemplate);</span>
+<span class="fc" id="L28">    }</span>
+
+    public List&lt;Portfolio&gt; findAllByUser(long userId) {
+<span class="fc" id="L31">        String sql = &quot;SELECT * FROM portfolio WHERE user_id = :userId ORDER BY name&quot;;</span>
+<span class="fc" id="L32">        return jdbcTemplate.query(sql, new MapSqlParameterSource(&quot;userId&quot;, userId), new PortfolioRowMapper());</span>
+    }
+
+    /**
+     * &lt;b&gt;The one query in this class that is not scoped to a user, and the only one that may
+     * ever be.&lt;/b&gt; The nightly valuation-snapshot job (day-5-dev-A.md D5-A2) has no
+     * authenticated user to scope by — it materialises yesterday for everybody.
+     *
+     * &lt;p&gt;Two things keep that safe and are the reason this is a separate, loudly named method
+     * rather than a {@code findAll}: it is unreachable from any controller (no service exposed to
+     * the web layer calls it), and it returns each portfolio's &lt;b&gt;owning {@code user_id}&lt;/b&gt;, so
+     * the job re-enters the normal read path through {@code PortfolioService.getOrThrow} as that
+     * user instead of bypassing the ownership check. A method that returned rows with the owner
+     * stripped off would be the bug CLAUDE.md non-negotiable #3 is about.
+     */
+    public List&lt;Portfolio&gt; findAllForSnapshotJob() {
+<span class="fc" id="L48">        return jdbcTemplate.query(&quot;SELECT * FROM portfolio ORDER BY id&quot;,</span>
+                new MapSqlParameterSource(), new PortfolioRowMapper());
+    }
+
+    public Optional&lt;Portfolio&gt; findByIdAndUser(long userId, long portfolioId) {
+<span class="fc" id="L53">        String sql = &quot;SELECT * FROM portfolio WHERE id = :id AND user_id = :userId&quot;;</span>
+<span class="fc" id="L54">        var params = new MapSqlParameterSource().addValue(&quot;id&quot;, portfolioId).addValue(&quot;userId&quot;, userId);</span>
+<span class="fc" id="L55">        List&lt;Portfolio&gt; results = jdbcTemplate.query(sql, params, new PortfolioRowMapper());</span>
+<span class="fc" id="L56">        return results.stream().findFirst();</span>
+    }
+
+    public Portfolio create(long userId, String name, CurrencyCode baseCurrency) {
+<span class="fc" id="L60">        String sql = &quot;&quot;&quot;</span>
+                INSERT INTO portfolio (user_id, name, base_currency)
+                VALUES (:userId, :name, :baseCurrency)
+                &quot;&quot;&quot;;
+<span class="fc" id="L64">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L65">                .addValue(&quot;userId&quot;, userId)</span>
+<span class="fc" id="L66">                .addValue(&quot;name&quot;, name)</span>
+<span class="fc" id="L67">                .addValue(&quot;baseCurrency&quot;, baseCurrency.name());</span>
+<span class="fc" id="L68">        long id = insert(sql, params);</span>
+<span class="fc" id="L69">        return findByIdAndUser(userId, id)</span>
+<span class="pc" id="L70">                .orElseThrow(() -&gt; new IllegalStateException(&quot;Portfolio not found immediately after insert: &quot; + id));</span>
+    }
+
+    /**
+     * API_CONTRACT.md §7 — &quot;cascades to its transactions, holdings and valuation snapshots&quot;.
+     * The snapshot delete is not optional politeness: once D5-A2 started materialising
+     * {@code portfolio_valuation_daily}, {@code fk_val_portfolio} makes the final
+     * {@code DELETE FROM portfolio} fail outright without it.
+     */
+    @Transactional
+    public void deleteByIdAndUser(long userId, long portfolioId) {
+<span class="fc" id="L81">        var params = new MapSqlParameterSource().addValue(&quot;id&quot;, portfolioId).addValue(&quot;userId&quot;, userId);</span>
+
+<span class="fc" id="L83">        jdbcTemplate.update(&quot;&quot;&quot;</span>
+                DELETE FROM portfolio_valuation_daily
+                WHERE portfolio_id IN (SELECT id FROM portfolio WHERE id = :id AND user_id = :userId)
+                &quot;&quot;&quot;, params);
+<span class="fc" id="L87">        jdbcTemplate.update(&quot;&quot;&quot;</span>
+                DELETE FROM holding
+                WHERE portfolio_id IN (SELECT id FROM portfolio WHERE id = :id AND user_id = :userId)
+                &quot;&quot;&quot;, params);
+<span class="fc" id="L91">        jdbcTemplate.update(&quot;&quot;&quot;</span>
+                DELETE FROM txn
+                WHERE portfolio_id IN (SELECT id FROM portfolio WHERE id = :id AND user_id = :userId)
+                &quot;&quot;&quot;, params);
+<span class="fc" id="L95">        jdbcTemplate.update(&quot;DELETE FROM portfolio WHERE id = :id AND user_id = :userId&quot;, params);</span>
+<span class="fc" id="L96">    }</span>
+
+    /** {@code SELECT ... FOR UPDATE} — must run inside an active transaction; serialises writes
+     * to one portfolio without contending with writes to a different one (ADR-0002). */
+    public Optional&lt;Portfolio&gt; lockForUpdate(long userId, long portfolioId) {
+<span class="fc" id="L101">        String sql = &quot;SELECT * FROM portfolio WHERE id = :id AND user_id = :userId FOR UPDATE&quot;;</span>
+<span class="fc" id="L102">        var params = new MapSqlParameterSource().addValue(&quot;id&quot;, portfolioId).addValue(&quot;userId&quot;, userId);</span>
+        try {
+<span class="fc" id="L104">            return Optional.of(jdbcTemplate.queryForObject(sql, params, new PortfolioRowMapper()));</span>
+<span class="fc" id="L105">        } catch (EmptyResultDataAccessException e) {</span>
+<span class="fc" id="L106">            return Optional.empty();</span>
+        }
+    }
+
+    /**
+     * day-4-dev-C.md D4-C4 (API_CONTRACT.md §5). Writes only {@code name} and
+     * {@code base_currency} on the {@code portfolio} row itself — never {@code txn}, never
+     * {@code holding}. That is the whole point of {@code BaseCurrencyImmutabilityIT}: changing
+     * the base currency is a presentation concern, and this method is mechanically incapable of
+     * touching the tables that would make it anything else.
+     */
+    public Portfolio update(long userId, long portfolioId, String name, CurrencyCode baseCurrency) {
+<span class="fc" id="L118">        String sql = &quot;&quot;&quot;</span>
+                UPDATE portfolio SET name = :name, base_currency = :baseCurrency
+                WHERE id = :id AND user_id = :userId
+                &quot;&quot;&quot;;
+<span class="fc" id="L122">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L123">                .addValue(&quot;name&quot;, name)</span>
+<span class="fc" id="L124">                .addValue(&quot;baseCurrency&quot;, baseCurrency.name())</span>
+<span class="fc" id="L125">                .addValue(&quot;id&quot;, portfolioId)</span>
+<span class="fc" id="L126">                .addValue(&quot;userId&quot;, userId);</span>
+<span class="fc" id="L127">        jdbcTemplate.update(sql, params);</span>
+<span class="fc" id="L128">        return findByIdAndUser(userId, portfolioId)</span>
+<span class="pc" id="L129">                .orElseThrow(() -&gt; new IllegalStateException(</span>
+                        &quot;Portfolio not found immediately after update: &quot; + portfolioId));
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>YahooMarketDataProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata.provider</a> &gt; <span class="el_source">YahooMarketDataProvider.java</span></div><h1>YahooMarketDataProvider.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata.provider;
+
+import com.protify.portfolio.common.enums.PriceSource;
+import com.protify.portfolio.common.port.MarketDataProvider;
+import com.protify.portfolio.common.port.PriceQuote;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * D2-B1 — default {@link MarketDataProvider}: keyless, global coverage, Yahoo's (unofficial,
+ * unversioned — ADR-0008) chart endpoint. Selected by {@code marketdata.provider=yahoo}
+ * (the default, via {@code @ConditionalOnProperty} below) or when the property is absent.
+ *
+ * &lt;p&gt;Two rules that are easy to get wrong and expensive to miss, both handled here, before
+ * anything is returned to a caller: symbol-to-ticker mapping ({@link YahooSymbolMapping}) and
+ * GBX→GBP normalisation for LSE instruments (never stored or returned as pence — R14).
+ *
+ * &lt;p&gt;Never throws: a timeout, a 429 or a malformed response all result in an empty result, not
+ * a propagated exception — {@link com.protify.portfolio.marketdata.CachingMarketDataService}
+ * relies on that to fall back to {@code price_history} / seeded data.
+ */
+@Component
+@ConditionalOnProperty(name = &quot;marketdata.provider&quot;, havingValue = &quot;yahoo&quot;, matchIfMissing = true)
+public class YahooMarketDataProvider implements MarketDataProvider {
+
+<span class="fc" id="L42">    private static final Logger log = LoggerFactory.getLogger(YahooMarketDataProvider.class);</span>
+
+    private static final String CHART_URL =
+            &quot;https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&amp;period1={period1}&amp;period2={period2}&quot;;
+    private static final int TIMEOUT_MILLIS = 3000;
+    private static final int MAX_ATTEMPTS = 2; // one try, one retry
+
+    private final RestClient restClient;
+
+    @Autowired
+    public YahooMarketDataProvider() {
+<span class="fc" id="L53">        this(defaultRestClient());</span>
+<span class="fc" id="L54">    }</span>
+
+<span class="fc" id="L56">    YahooMarketDataProvider(RestClient restClient) {</span>
+<span class="fc" id="L57">        this.restClient = restClient;</span>
+<span class="fc" id="L58">    }</span>
+
+    private static RestClient defaultRestClient() {
+<span class="fc" id="L61">        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();</span>
+<span class="fc" id="L62">        factory.setConnectTimeout(TIMEOUT_MILLIS);</span>
+<span class="fc" id="L63">        factory.setReadTimeout(TIMEOUT_MILLIS);</span>
+<span class="fc" id="L64">        return RestClient.builder().requestFactory(factory).build();</span>
+    }
+
+    @Override
+    public Optional&lt;PriceQuote&gt; latestPrice(String symbol) {
+<span class="fc" id="L69">        List&lt;PriceQuote&gt; recent = dailyCloses(symbol, LocalDate.now(ZoneOffset.UTC).minusDays(10),</span>
+<span class="fc" id="L70">                LocalDate.now(ZoneOffset.UTC));</span>
+<span class="fc" id="L71">        return recent.stream().max(Comparator.comparing(PriceQuote::date));</span>
+    }
+
+    @Override
+    public List&lt;PriceQuote&gt; dailyCloses(String symbol, LocalDate from, LocalDate to) {
+<span class="fc" id="L76">        String cleanSymbol = symbol.strip().toUpperCase();</span>
+<span class="fc" id="L77">        YahooSymbolMapping.Mapping mapping = YahooSymbolMapping.resolve(cleanSymbol);</span>
+<span class="fc" id="L78">        long period1 = from.atStartOfDay(ZoneOffset.UTC).toEpochSecond();</span>
+<span class="fc" id="L79">        long period2 = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond();</span>
+
+<span class="fc" id="L81">        Optional&lt;YahooChartResponse&gt; response = fetchWithRetry(mapping.providerSymbol(), period1, period2);</span>
+<span class="fc" id="L82">        return response.map(r -&gt; toPriceQuotes(r, cleanSymbol, mapping)).orElseGet(List::of);</span>
+    }
+
+    @Override
+    public String sourceName() {
+<span class="fc" id="L87">        return PriceSource.YAHOO.name();</span>
+    }
+
+    private Optional&lt;YahooChartResponse&gt; fetchWithRetry(String providerSymbol, long period1, long period2) {
+<span class="fc" id="L91">        RestClientException lastError = null;</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        for (int attempt = 1; attempt &lt;= MAX_ATTEMPTS; attempt++) {</span>
+            try {
+<span class="fc" id="L94">                YahooChartResponse body = restClient.get()</span>
+<span class="fc" id="L95">                        .uri(CHART_URL, providerSymbol, period1, period2)</span>
+<span class="fc" id="L96">                        .retrieve()</span>
+<span class="fc" id="L97">                        .body(YahooChartResponse.class);</span>
+<span class="fc" id="L98">                return Optional.ofNullable(body);</span>
+<span class="fc" id="L99">            } catch (RestClientException e) {</span>
+<span class="fc" id="L100">                lastError = e;</span>
+<span class="fc" id="L101">                log.warn(&quot;Yahoo chart request for {} failed on attempt {}/{}: {}&quot;,</span>
+<span class="fc" id="L102">                        providerSymbol, attempt, MAX_ATTEMPTS, e.getMessage());</span>
+            }
+        }
+<span class="fc" id="L105">        log.warn(&quot;Yahoo chart request for {} exhausted retries; falling back&quot;, providerSymbol, lastError);</span>
+<span class="fc" id="L106">        return Optional.empty();</span>
+    }
+
+    private static List&lt;PriceQuote&gt; toPriceQuotes(YahooChartResponse response, String cleanSymbol,
+                                                    YahooSymbolMapping.Mapping mapping) {
+<span class="pc bpc" id="L111" title="2 of 6 branches missed.">        if (response.chart() == null || response.chart().result() == null || response.chart().result().isEmpty()) {</span>
+<span class="fc" id="L112">            return List.of();</span>
+        }
+<span class="fc" id="L114">        YahooChartResponse.YahooResult result = response.chart().result().get(0);</span>
+<span class="pc bpc" id="L115" title="2 of 4 branches missed.">        if (result.timestamp() == null || result.indicators() == null</span>
+<span class="pc bpc" id="L116" title="2 of 4 branches missed.">                || result.indicators().quote() == null || result.indicators().quote().isEmpty()) {</span>
+<span class="nc" id="L117">            return List.of();</span>
+        }
+
+<span class="fc" id="L120">        List&lt;Long&gt; timestamps = result.timestamp();</span>
+<span class="fc" id="L121">        List&lt;BigDecimal&gt; closes = result.indicators().quote().get(0).close();</span>
+<span class="fc" id="L122">        List&lt;PriceQuote&gt; quotes = new ArrayList&lt;&gt;();</span>
+
+<span class="pc bpc" id="L124" title="1 of 4 branches missed.">        for (int i = 0; i &lt; timestamps.size() &amp;&amp; i &lt; closes.size(); i++) {</span>
+<span class="fc" id="L125">            BigDecimal close = closes.get(i);</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">            if (close == null) {</span>
+<span class="nc" id="L127">                continue; // Yahoo returns null for non-trading days inside the range</span>
+            }
+<span class="fc" id="L129">            LocalDate date = Instant.ofEpochSecond(timestamps.get(i)).atZone(ZoneOffset.UTC).toLocalDate();</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">            BigDecimal normalisedClose = mapping.quotedInMinorUnits()</span>
+<span class="fc" id="L131">                    ? close.divide(BigDecimal.valueOf(100), 4, RoundingMode.HALF_UP)</span>
+<span class="fc" id="L132">                    : close;</span>
+<span class="fc" id="L133">            quotes.add(new PriceQuote(cleanSymbol, date, normalisedClose, mapping.currency(), PriceSource.YAHOO));</span>
+        }
+<span class="fc" id="L135">        return quotes;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

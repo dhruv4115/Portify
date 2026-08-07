@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RuleBasedInsights.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.insights</a> &gt; <span class="el_source">RuleBasedInsights.java</span></div><h1>RuleBasedInsights.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.insights;
+
+import com.protify.portfolio.common.money.MoneyUtils;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * D5-B2 — &quot;on failure, a rule-based summary generated in Java, so the whole feature degrades
+ * twice before it fails&quot;: this is the SECOND fallback, used when the Python service itself is
+ * unreachable or times out. Deliberately simpler than {@code services/insights/main.py}'s
+ * generator (fewer highlight types) — it exists purely so a portfolio page never goes blank,
+ * not to duplicate the full Python feature set. Pure Java, deterministic, no I/O.
+ */
+final class RuleBasedInsights {
+
+<span class="fc" id="L20">    private static final BigDecimal CONCENTRATION_THRESHOLD_PCT = new BigDecimal(&quot;40&quot;);</span>
+<span class="fc" id="L21">    private static final BigDecimal FX_EXPOSURE_NOTABLE_PCT = new BigDecimal(&quot;20&quot;);</span>
+<span class="fc" id="L22">    private static final BigDecimal CASH_DRAG_NOTABLE_PCT = new BigDecimal(&quot;10&quot;);</span>
+    private static final int PCT_SCALE = 1;
+
+    private RuleBasedInsights() {
+    }
+
+    static InsightsResult generate(PortfolioSummary summary) {
+<span class="fc" id="L29">        List&lt;Highlight&gt; highlights = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L30">        highlights.addAll(concentrationHighlights(summary));</span>
+<span class="fc" id="L31">        fxExposureHighlight(summary).ifPresent(highlights::add);</span>
+<span class="fc" id="L32">        highlights.addAll(performanceHighlights(summary));</span>
+<span class="fc" id="L33">        cashDragHighlight(summary).ifPresent(highlights::add);</span>
+
+<span class="pc bpc" id="L35" title="1 of 2 branches missed.">        String summaryText = highlights.isEmpty()</span>
+<span class="nc" id="L36">                ? &quot;No notable concentration, FX exposure, performance outlier or cash drag detected.&quot;</span>
+<span class="fc" id="L37">                : highlights.stream().map(Highlight::message).reduce((a, b) -&gt; a + &quot; &quot; + b).orElse(&quot;&quot;);</span>
+
+<span class="fc" id="L39">        return new InsightsResult(summaryText, highlights, Engine.RULE_BASED);</span>
+    }
+
+    private static List&lt;Highlight&gt; concentrationHighlights(PortfolioSummary summary) {
+<span class="fc" id="L43">        BigDecimal total = summary.totalMarketValue();</span>
+<span class="pc bpc" id="L44" title="3 of 6 branches missed.">        if (total == null || MoneyUtils.isZero(total) || MoneyUtils.isNegative(total)) {</span>
+<span class="nc" id="L45">            return List.of();</span>
+        }
+<span class="fc" id="L47">        List&lt;Highlight&gt; highlights = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        for (HoldingSummary holding : summary.holdings()) {</span>
+<span class="fc" id="L49">            BigDecimal weight = pct(holding.marketValue(), total);</span>
+<span class="fc bfc" id="L50" title="All 2 branches covered.">            if (weight.compareTo(CONCENTRATION_THRESHOLD_PCT) &gt; 0) {</span>
+<span class="pc bpc" id="L51" title="1 of 2 branches missed.">                String severity = weight.compareTo(new BigDecimal(&quot;60&quot;)) &gt; 0 ? &quot;HIGH&quot; : &quot;MEDIUM&quot;;</span>
+<span class="fc" id="L52">                highlights.add(new Highlight(&quot;CONCENTRATION&quot;, severity,</span>
+<span class="fc" id="L53">                        &quot;%s is %s%% of market value.&quot;.formatted(holding.symbol(), weight)));</span>
+            }
+<span class="fc" id="L55">        }</span>
+<span class="fc" id="L56">        return highlights;</span>
+    }
+
+    private static Optional&lt;Highlight&gt; fxExposureHighlight(PortfolioSummary summary) {
+<span class="fc" id="L60">        BigDecimal total = summary.totalMarketValue();</span>
+<span class="pc bpc" id="L61" title="3 of 6 branches missed.">        if (total == null || MoneyUtils.isZero(total) || MoneyUtils.isNegative(total)) {</span>
+<span class="nc" id="L62">            return Optional.empty();</span>
+        }
+<span class="fc" id="L64">        BigDecimal nonBaseValue = summary.holdings().stream()</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">                .filter(h -&gt; h.currency() != summary.baseCurrency())</span>
+<span class="fc" id="L66">                .map(HoldingSummary::marketValue)</span>
+<span class="fc" id="L67">                .reduce(BigDecimal.ZERO, BigDecimal::add);</span>
+<span class="fc" id="L68">        BigDecimal pct = pct(nonBaseValue, total);</span>
+<span class="pc bpc" id="L69" title="2 of 4 branches missed.">        if (MoneyUtils.isZero(pct) || MoneyUtils.isNegative(pct)) {</span>
+<span class="nc" id="L70">            return Optional.empty();</span>
+        }
+<span class="pc bpc" id="L72" title="1 of 2 branches missed.">        String severity = pct.compareTo(new BigDecimal(&quot;60&quot;)) &gt; 0 ? &quot;HIGH&quot;</span>
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">                : pct.compareTo(FX_EXPOSURE_NOTABLE_PCT) &gt;= 0 ? &quot;MEDIUM&quot; : &quot;LOW&quot;;</span>
+<span class="fc" id="L74">        return Optional.of(new Highlight(&quot;FX_EXPOSURE&quot;, severity,</span>
+<span class="fc" id="L75">                &quot;%s%% of holdings are non-%s.&quot;.formatted(pct, summary.baseCurrency())));</span>
+    }
+
+    private static List&lt;Highlight&gt; performanceHighlights(PortfolioSummary summary) {
+<span class="fc" id="L79">        List&lt;HoldingSummary&gt; priced = summary.holdings().stream()</span>
+<span class="pc bpc" id="L80" title="3 of 6 branches missed.">                .filter(h -&gt; h.costBasis() != null &amp;&amp; !MoneyUtils.isZero(h.costBasis()) &amp;&amp; !MoneyUtils.isNegative(h.costBasis()))</span>
+<span class="fc" id="L81">                .toList();</span>
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        if (priced.isEmpty()) {</span>
+<span class="nc" id="L83">            return List.of();</span>
+        }
+<span class="fc" id="L85">        Comparator&lt;HoldingSummary&gt; byPnlPct = Comparator.comparing(RuleBasedInsights::pnlPct);</span>
+<span class="fc" id="L86">        HoldingSummary best = priced.stream().max(byPnlPct).orElseThrow();</span>
+<span class="fc" id="L87">        HoldingSummary worst = priced.stream().min(byPnlPct).orElseThrow();</span>
+
+<span class="fc" id="L89">        List&lt;Highlight&gt; highlights = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L90">        highlights.add(new Highlight(&quot;PERFORMANCE&quot;, &quot;LOW&quot;,</span>
+<span class="fc" id="L91">                &quot;Best performer: %s (%s%%).&quot;.formatted(best.symbol(), signed(pnlPct(best)))));</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">        if (!worst.symbol().equals(best.symbol())) {</span>
+<span class="fc" id="L93">            highlights.add(new Highlight(&quot;PERFORMANCE&quot;, &quot;LOW&quot;,</span>
+<span class="fc" id="L94">                    &quot;Worst performer: %s (%s%%).&quot;.formatted(worst.symbol(), signed(pnlPct(worst)))));</span>
+        }
+<span class="fc" id="L96">        return highlights;</span>
+    }
+
+    private static Optional&lt;Highlight&gt; cashDragHighlight(PortfolioSummary summary) {
+<span class="pc bpc" id="L100" title="1 of 2 branches missed.">        BigDecimal cash = summary.cashBalance() == null ? BigDecimal.ZERO : summary.cashBalance();</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">        BigDecimal total = (summary.totalMarketValue() == null ? BigDecimal.ZERO : summary.totalMarketValue()).add(cash);</span>
+<span class="pc bpc" id="L102" title="2 of 4 branches missed.">        if (MoneyUtils.isZero(total) || MoneyUtils.isNegative(total)) {</span>
+<span class="nc" id="L103">            return Optional.empty();</span>
+        }
+<span class="fc" id="L105">        BigDecimal pct = pct(cash, total);</span>
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        if (pct.compareTo(CASH_DRAG_NOTABLE_PCT) &lt; 0) {</span>
+<span class="fc" id="L107">            return Optional.empty();</span>
+        }
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        String severity = pct.compareTo(new BigDecimal(&quot;30&quot;)) &gt; 0 ? &quot;HIGH&quot; : &quot;MEDIUM&quot;;</span>
+<span class="nc" id="L110">        return Optional.of(new Highlight(&quot;CASH_DRAG&quot;, severity,</span>
+<span class="nc" id="L111">                &quot;%s%% of the portfolio is sitting in cash.&quot;.formatted(pct)));</span>
+    }
+
+    private static BigDecimal pct(BigDecimal part, BigDecimal whole) {
+<span class="fc" id="L115">        return part.divide(whole, PCT_SCALE + 4, RoundingMode.HALF_UP)</span>
+<span class="fc" id="L116">                .multiply(BigDecimal.valueOf(100))</span>
+<span class="fc" id="L117">                .setScale(PCT_SCALE, RoundingMode.HALF_UP);</span>
+    }
+
+    /** {@code Comparator.comparing}/{@code BigDecimal} sort correctly without ever going
+     * through {@code double} — {@link BigDecimal} implements {@link Comparable} directly. */
+    private static BigDecimal pnlPct(HoldingSummary holding) {
+<span class="fc" id="L123">        return holding.marketValue().subtract(holding.costBasis())</span>
+<span class="fc" id="L124">                .divide(holding.costBasis(), PCT_SCALE + 4, RoundingMode.HALF_UP)</span>
+<span class="fc" id="L125">                .multiply(BigDecimal.valueOf(100))</span>
+<span class="fc" id="L126">                .setScale(PCT_SCALE, RoundingMode.HALF_UP);</span>
+    }
+
+    /** {@link BigDecimal#toPlainString()} already carries a &quot;-&quot; for negative values; this adds
+     * the &quot;+&quot; for non-negative ones so both best and worst performer read consistently. */
+    private static String signed(BigDecimal value) {
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        return (value.signum() &gt;= 0 ? &quot;+&quot; : &quot;&quot;) + value.toPlainString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

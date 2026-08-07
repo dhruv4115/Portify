@@ -1,0 +1,43 @@
+-- day-5-dev-A.md D5-A3 — "profile first, then index".
+--
+-- Profiled with EXPLAIN against real MySQL 8.4 carrying the V11/V12 seed (≈9,600 price_history
+-- rows, ≈1,500 fx_rate rows) plus 500 transactions over 20 instruments. Both of ADR-0010's
+-- "flat queries" came back type=ALL, key=null — full table scans:
+--
+--   price_history findRange   rows examined 9592 for 6940 returned, no key
+--   fx_rate       findRange   rows examined 1527 for 1083 returned, no key
+--
+-- Only the first of those is fixable from this file. See the note at the bottom.
+--
+-- uk_price (instrument_id, price_date) does cover the price predicate, but a 20-instrument IN
+-- list is most of the table, so 20 range dives plus a row lookup each cost more than one scan and
+-- the optimiser correctly declines it. Adding close_price makes the index covering: the same scan
+-- then reads narrow index pages and never touches a row.
+CREATE INDEX idx_price_instrument_date_close
+    ON price_history (instrument_id, price_date, close_price);
+
+-- Deliberately NOT added, having been profiled and found already served:
+--
+--   txn (portfolio_id, executed_at)   idx_txn_portfolio_executed exists, and InnoDB appends the
+--                                     primary key, so it already satisfies ORDER BY executed_at,
+--                                     id. It reads as a scan under EXPLAIN only because the
+--                                     profiling fixture has a single portfolio holding every row.
+--   portfolio_valuation_daily         type=range on uk_val as widened by V3. Optimal already.
+--   instrument (id)                   type=const on the primary key. The cost there was never the
+--                                     index, it was calling it once per instrument — fixed in
+--                                     Java by InstrumentRepository.findAllByIds, not here.
+--
+-- ---------------------------------------------------------------------------------------------
+-- HAND-OFF TO DEV B — the fx_rate index this file cannot contain.
+--
+-- FxRateRepository.findRange filters `base_ccy = 'USD' AND rate_date <= ?` and selects
+-- quote_ccy, rate_date, rate. uk_fx (base_ccy, quote_ccy, rate_date) puts rate_date third, so
+-- only its first column is usable, and idx_fx_date (rate_date) alone is no better — hence the
+-- full scan above. The index that fits, and covers:
+--
+--     CREATE INDEX idx_fx_base_date_quote_rate ON fx_rate (base_ccy, rate_date, quote_ccy, rate);
+--
+-- It belongs in a V13+ migration, not here, and not because of etiquette: fx_rate is created by
+-- V10__fx_rate.sql, so at the moment this file runs the table does not exist yet and the
+-- statement fails with "Table 'fx_rate' doesn't exist". ADR-0007's per-developer number ranges
+-- mean nothing in Dev A's V1–V9 can ever index a table Dev B creates in V10+.

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PortfolioService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.portfolio</a> &gt; <span class="el_source">PortfolioService.java</span></div><h1>PortfolioService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.portfolio;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.error.NotFoundException;
+import java.util.List;
+import org.springframework.stereotype.Service;
+
+/** Thin orchestration over {@link PortfolioRepository} — translates &quot;not found&quot; for callers
+ * that need a portfolio to exist rather than an {@code Optional}. */
+@Service
+public class PortfolioService {
+
+    private final PortfolioRepository repository;
+
+<span class="fc" id="L15">    public PortfolioService(PortfolioRepository repository) {</span>
+<span class="fc" id="L16">        this.repository = repository;</span>
+<span class="fc" id="L17">    }</span>
+
+    public List&lt;Portfolio&gt; findAllByUser(long userId) {
+<span class="fc" id="L20">        return repository.findAllByUser(userId);</span>
+    }
+
+    public Portfolio getOrThrow(long userId, long portfolioId) {
+<span class="fc" id="L24">        return repository.findByIdAndUser(userId, portfolioId)</span>
+<span class="fc" id="L25">                .orElseThrow(() -&gt; new NotFoundException(&quot;portfolio&quot;, portfolioId));</span>
+    }
+
+    public Portfolio create(long userId, String name, CurrencyCode baseCurrency) {
+<span class="nc" id="L29">        return repository.create(userId, name, baseCurrency);</span>
+    }
+
+    /**
+     * day-4-dev-C.md D4-C4. {@code name}/{@code baseCurrency} are each optional at the call
+     * site (the controller has already rejected &quot;both absent&quot;); whichever is {@code null} here
+     * keeps the portfolio's current value rather than being written as {@code null}.
+     */
+    public Portfolio update(long userId, long portfolioId, String name, CurrencyCode baseCurrency) {
+<span class="fc" id="L38">        Portfolio existing = getOrThrow(userId, portfolioId);</span>
+<span class="pc bpc" id="L39" title="1 of 2 branches missed.">        String effectiveName = name != null ? name : existing.name();</span>
+<span class="pc bpc" id="L40" title="1 of 2 branches missed.">        CurrencyCode effectiveCurrency = baseCurrency != null ? baseCurrency : existing.baseCurrency();</span>
+<span class="fc" id="L41">        return repository.update(userId, portfolioId, effectiveName, effectiveCurrency);</span>
+    }
+
+    public void delete(long userId, long portfolioId) {
+<span class="nc" id="L45">        getOrThrow(userId, portfolioId);</span>
+<span class="nc" id="L46">        repository.deleteByIdAndUser(userId, portfolioId);</span>
+<span class="nc" id="L47">    }</span>
+
+    public Portfolio lockForUpdate(long userId, long portfolioId) {
+<span class="fc" id="L50">        return repository.lockForUpdate(userId, portfolioId)</span>
+<span class="fc" id="L51">                .orElseThrow(() -&gt; new NotFoundException(&quot;portfolio&quot;, portfolioId));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

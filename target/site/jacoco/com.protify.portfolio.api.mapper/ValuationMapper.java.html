@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.mapper</a> &gt; <span class="el_source">ValuationMapper.java</span></div><h1>ValuationMapper.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.mapper;
+
+import com.protify.portfolio.api.dto.DataQualityDto;
+import com.protify.portfolio.api.dto.MoneyDto;
+import com.protify.portfolio.api.dto.ValuationResponse;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.valuation.ValuationResult;
+import java.math.BigDecimal;
+import org.springframework.stereotype.Component;
+
+/**
+ * Explicit, hand-written mapping — no MapStruct, no reflection. {@link ValuationResult}'s
+ * nullable money fields stay nullable: they mean &quot;this portfolio holds positions and none of them
+ * could be priced&quot;, and substituting zero would report a portfolio as worthless rather than as
+ * unpriced.
+ *
+ * &lt;p&gt;{@code stale} is {@link ValuationResult#stale()} passed through untouched. That flag is
+ * stricter than API_CONTRACT.md §0.5's &quot;more than 3 calendar days behind&quot; — {@code
+ * ValuationService} raises it whenever any price or rate was forward-filled at all, so a Monday
+ * reading Friday's close reports stale. Not relaxed here on purpose: only that service sees the
+ * per-instrument dates, so a mapper working from the aggregate cannot tell a weekend apart from a
+ * dead provider, and overriding it would mean claiming data is fresh that the layer which
+ * computed it says is not. Raised with the team as a thing to reconcile in
+ * {@code ValuationService}, where the information actually is.
+ */
+@Component
+<span class="fc" id="L27">public class ValuationMapper {</span>
+
+    public ValuationResponse toResponse(ValuationResult result) {
+<span class="fc" id="L30">        CurrencyCode currency = result.currency();</span>
+<span class="fc" id="L31">        return new ValuationResponse(</span>
+<span class="fc" id="L32">                result.portfolioId(),</span>
+<span class="fc" id="L33">                result.asOf(),</span>
+                currency,
+<span class="fc" id="L35">                money(result.marketValue(), currency),</span>
+<span class="fc" id="L36">                money(result.costBasis(), currency),</span>
+<span class="fc" id="L37">                money(result.cashBalance(), currency),</span>
+<span class="fc" id="L38">                money(result.totalValue(), currency),</span>
+<span class="fc" id="L39">                money(result.unrealisedPnl(), currency),</span>
+<span class="fc" id="L40">                money(result.realisedPnl(), currency),</span>
+                // null when cost basis is zero, never Infinity and never 0 (TEST_PLAN.md §4.2)
+<span class="fc bfc" id="L42" title="All 2 branches covered.">                result.unrealisedPnlPct() == null ? null : result.unrealisedPnlPct().toPlainString(),</span>
+<span class="fc" id="L43">                result.holdingCount(),</span>
+<span class="fc" id="L44">                new DataQualityDto(result.priceAsOf(), result.rateAsOf(), result.stale()));</span>
+    }
+
+    private static MoneyDto money(BigDecimal amount, CurrencyCode currency) {
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        return amount == null ? null : MoneyDto.of(amount, currency);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

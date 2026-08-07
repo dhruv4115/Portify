@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CashFlowSeries.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">CashFlowSeries.java</span></div><h1>CashFlowSeries.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.TransactionType;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.transaction.Txn;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.TreeMap;
+
+/**
+ * External cash flows — {@code DEPOSIT} minus {@code WITHDRAWAL} — per date, in a target
+ * currency at each transfer's &lt;b&gt;own&lt;/b&gt; trade date (ADR-0011, the same rule
+ * {@link ValuationFolder} applies to cost basis).
+ *
+ * &lt;p&gt;Extracted from {@link PerformanceService}, which needs only the total (its
+ * {@code netContributions}), so that {@link AnalyticsService} can use the per-day breakdown for
+ * time-weighted return without a second, subtly different definition of &quot;the user's own money&quot;.
+ * A sign slip or a missed transaction type in one copy and not the other would make the chart
+ * and the analytics panel disagree about the same portfolio, which is exactly the class of bug
+ * {@link ValuationFolder} and {@link PositionPricer} are shared to prevent.
+ *
+ * &lt;p&gt;{@code BUY}, {@code SELL}, {@code DIVIDEND} and {@code FEE} are deliberately &lt;b&gt;not&lt;/b&gt;
+ * flows: they move money between cash and positions, or are a cost of running the portfolio.
+ * Only a deposit or a withdrawal changes how much the user has put in, and only those two must
+ * be netted out before a return is computed.
+ */
+public final class CashFlowSeries {
+
+    private CashFlowSeries() {
+    }
+
+    /**
+     * Net external flow per date, restricted to {@code [from, to]} inclusive. Dates with no
+     * transfer are absent rather than mapped to zero, so callers can tell &quot;no flow&quot; from
+     * &quot;a deposit and a withdrawal that happened to cancel&quot;.
+     *
+     * @param fxLookup never returns {@code null} ({@link ProjectionContext.FxLookup}'s
+     *                 contract), so an unresolvable rate falls back to identity rather than
+     *                 dropping a transfer out of the total
+     */
+    public static NavigableMap&lt;LocalDate, BigDecimal&gt; byDate(
+            List&lt;Txn&gt; txns, ProjectionContext.FxLookup fxLookup, LocalDate from, LocalDate to) {
+
+<span class="fc" id="L47">        NavigableMap&lt;LocalDate, BigDecimal&gt; flows = new TreeMap&lt;&gt;();</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        for (Txn txn : txns) {</span>
+<span class="fc bfc" id="L49" title="All 4 branches covered.">            if (txn.txnType() != TransactionType.DEPOSIT &amp;&amp; txn.txnType() != TransactionType.WITHDRAWAL) {</span>
+<span class="fc" id="L50">                continue;</span>
+            }
+<span class="fc" id="L52">            LocalDate date = ValuationFolder.dateOf(txn);</span>
+<span class="pc bpc" id="L53" title="2 of 4 branches missed.">            if (date.isBefore(from) || date.isAfter(to)) {</span>
+<span class="nc" id="L54">                continue;</span>
+            }
+<span class="fc" id="L56">            BigDecimal amount = txn.price().multiply(fxLookup.rate(txn.currency(), date));</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">            BigDecimal signed = txn.txnType() == TransactionType.DEPOSIT ? amount : amount.negate();</span>
+<span class="fc" id="L58">            flows.merge(date, signed, BigDecimal::add);</span>
+<span class="fc" id="L59">        }</span>
+<span class="fc" id="L60">        return flows;</span>
+    }
+
+    /** Deposits minus withdrawals over the whole window, rounded once at the end. */
+    public static BigDecimal total(NavigableMap&lt;LocalDate, BigDecimal&gt; flows) {
+<span class="fc" id="L65">        BigDecimal total = BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        for (BigDecimal flow : flows.values()) {</span>
+<span class="fc" id="L67">            total = total.add(flow);</span>
+<span class="fc" id="L68">        }</span>
+<span class="fc" id="L69">        return MoneyUtils.money(total);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

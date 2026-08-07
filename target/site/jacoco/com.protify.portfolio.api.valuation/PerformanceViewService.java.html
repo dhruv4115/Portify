@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PerformanceViewService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.valuation</a> &gt; <span class="el_source">PerformanceViewService.java</span></div><h1>PerformanceViewService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.valuation;
+
+import com.protify.portfolio.api.dto.PerformanceInterval;
+import com.protify.portfolio.api.dto.PerformanceResponse;
+import com.protify.portfolio.api.error.FieldViolation;
+import com.protify.portfolio.api.error.RequestValidationException;
+import com.protify.portfolio.api.mapper.PerformanceMapper;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.valuation.PerformancePoint;
+import com.protify.portfolio.valuation.PerformanceResult;
+import com.protify.portfolio.valuation.PerformanceService;
+import java.time.LocalDate;
+import java.time.YearMonth;
+import java.time.temporal.WeekFields;
+import java.util.ArrayList;
+import java.util.List;
+import org.springframework.stereotype.Service;
+
+/**
+ * The read model behind {@code /portfolios/{id}/performance} (day-3-dev-C.md D3-C3). Two jobs
+ * Dev A's {@link PerformanceService} deliberately does not do:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;&lt;b&gt;Field-level range errors.&lt;/b&gt; That service rejects {@code from &gt; to} and an over-wide
+ *       window with a {@code common.ValidationException}, which carries no field list, so the
+ *       client gets a 400 with an empty {@code errors[]}. The same two rules are checked here
+ *       first and thrown as a {@link RequestValidationException} naming {@code from}/{@code to},
+ *       which §12 and D3-C3 both require. The bounds are kept identical to that service's on
+ *       purpose — this is a better error for the same rule, never a different rule.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Sampling.&lt;/b&gt; {@link PerformanceService} computes {@code DAILY} only. Rather than
+ *       accept an {@code interval} it silently ignores, or reject a value §12 documents, the
+ *       weekly and monthly series are taken from the daily one here: sampling how densely to
+ *       draw a line is a presentation concern, and every point returned is still a real computed
+ *       valuation, not an average or an interpolation.&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+@Service
+public class PerformanceViewService {
+
+    /** Matches {@code PerformanceService.MAX_RANGE_YEARS} — the two must not drift apart. */
+    private static final long MAX_RANGE_YEARS = 5;
+
+    private final PerformanceService performanceService;
+    private final PerformanceMapper performanceMapper;
+
+<span class="fc" id="L46">    public PerformanceViewService(PerformanceService performanceService, PerformanceMapper performanceMapper) {</span>
+<span class="fc" id="L47">        this.performanceService = performanceService;</span>
+<span class="fc" id="L48">        this.performanceMapper = performanceMapper;</span>
+<span class="fc" id="L49">    }</span>
+
+    public PerformanceResponse get(long userId, long portfolioId, LocalDate from, LocalDate to,
+            PerformanceInterval interval, CurrencyCode currency) {
+<span class="fc" id="L53">        requireValidRange(from, to);</span>
+<span class="fc" id="L54">        PerformanceResult result = performanceService.getPerformance(userId, portfolioId, from, to, currency);</span>
+<span class="fc" id="L55">        return performanceMapper.toResponse(result, sample(result.points(), interval), interval);</span>
+    }
+
+    private static void requireValidRange(LocalDate from, LocalDate to) {
+<span class="fc bfc" id="L59" title="All 2 branches covered.">        if (from.isAfter(to)) {</span>
+<span class="fc" id="L60">            throw new RequestValidationException(&quot;/errors/invalid-date-range&quot;,</span>
+                    &quot;from must not be after to.&quot;,
+<span class="fc" id="L62">                    List.of(new FieldViolation(&quot;from&quot;, &quot;must not be after to&quot;)));</span>
+        }
+<span class="fc bfc" id="L64" title="All 2 branches covered.">        if (from.plusYears(MAX_RANGE_YEARS).isBefore(to)) {</span>
+<span class="fc" id="L65">            throw new RequestValidationException(&quot;/errors/invalid-date-range&quot;,</span>
+<span class="fc" id="L66">                    &quot;The requested range must not exceed %d years.&quot;.formatted(MAX_RANGE_YEARS),</span>
+<span class="fc" id="L67">                    List.of(new FieldViolation(&quot;to&quot;, &quot;must be within %d years of from&quot;.formatted(MAX_RANGE_YEARS))));</span>
+        }
+<span class="fc" id="L69">    }</span>
+
+    /**
+     * Keeps the last point of each interval — the closing value of that week or month, which is
+     * what a chart of period-end values shows. Points arrive in ascending date order, so this is
+     * one pass and no sorting.
+     */
+    private static List&lt;PerformancePoint&gt; sample(List&lt;PerformancePoint&gt; points, PerformanceInterval interval) {
+<span class="pc bpc" id="L77" title="1 of 4 branches missed.">        if (interval == PerformanceInterval.DAILY || points.size() &lt; 2) {</span>
+<span class="fc" id="L78">            return points;</span>
+        }
+<span class="fc" id="L80">        List&lt;PerformancePoint&gt; sampled = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        for (int i = 0; i &lt; points.size(); i++) {</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            boolean lastOfBucket = i == points.size() - 1</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">                    || !bucketOf(points.get(i).date(), interval).equals(bucketOf(points.get(i + 1).date(), interval));</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">            if (lastOfBucket) {</span>
+<span class="fc" id="L85">                sampled.add(points.get(i));</span>
+            }
+        }
+<span class="fc" id="L88">        return sampled;</span>
+    }
+
+    private static String bucketOf(LocalDate date, PerformanceInterval interval) {
+<span class="pc bpc" id="L92" title="1 of 3 branches missed.">        return switch (interval) {</span>
+<span class="nc" id="L93">            case DAILY -&gt; date.toString();</span>
+            // ISO weeks, so a week spanning a year boundary stays one bucket
+<span class="fc" id="L95">            case WEEKLY -&gt; date.get(WeekFields.ISO.weekBasedYear()) + &quot;-W&quot;</span>
+<span class="fc" id="L96">                    + date.get(WeekFields.ISO.weekOfWeekBasedYear());</span>
+<span class="fc" id="L97">            case MONTHLY -&gt; YearMonth.from(date).toString();</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

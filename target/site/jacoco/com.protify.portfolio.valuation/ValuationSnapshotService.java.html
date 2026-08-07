@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationSnapshotService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationSnapshotService.java</span></div><h1>ValuationSnapshotService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.TreeMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+/**
+ * day-5-dev-A.md D5-A2 — the cache policy over {@code portfolio_valuation_daily}.
+ *
+ * &lt;p&gt;&lt;b&gt;The fold is the source of truth; this is a derived cache; the cache is invalidated by the
+ * same event that makes it wrong.&lt;/b&gt; That is the same relationship {@code txn} has with
+ * {@code holding}, and it is the reason the table is safe to use at all: nothing here can produce
+ * an answer the fold would not, only produce it faster or not at all.
+ *
+ * &lt;p&gt;Three rules make that true, and every one of them is load-bearing:
+ *
+ * &lt;ol&gt;
+ *   &lt;li&gt;&lt;b&gt;Completed days only.&lt;/b&gt; Today's valuation is still moving — a price fetched at 10:00
+ *       is not the close. {@link #isCompleted} is the only place in the codebase that decides
+ *       what &quot;today&quot; means for a snapshot, so {@link PerformanceService} does not need a
+ *       {@link Clock} of its own and the two cannot drift apart.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;A write or delete invalidates from that transaction's date onward&lt;/b&gt;
+ *       ({@link #invalidateFrom}). A mid-history delete changes every subsequent day.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;A missing snapshot is computed, never a gap.&lt;/b&gt; {@link PerformanceService} folds any
+ *       uncovered day live and hands it back here through {@link #store}, which is best-effort:
+ *       a chart must not fail because a cache write did.&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+@Service
+public class ValuationSnapshotService {
+
+<span class="fc" id="L38">    private static final Logger log = LoggerFactory.getLogger(ValuationSnapshotService.class);</span>
+
+    private final ValuationSnapshotRepository repository;
+    private final Clock clock;
+
+<span class="fc" id="L43">    public ValuationSnapshotService(ValuationSnapshotRepository repository, Clock clock) {</span>
+<span class="fc" id="L44">        this.repository = repository;</span>
+<span class="fc" id="L45">        this.clock = clock;</span>
+<span class="fc" id="L46">    }</span>
+
+    /** A day is snapshottable once it is over. UTC, like everything else here (CLAUDE.md #9). */
+    public boolean isCompleted(LocalDate day) {
+<span class="fc" id="L50">        return day.isBefore(LocalDate.now(clock));</span>
+    }
+
+    /**
+     * Cached valuations for the completed days within {@code [from, to]}. The window is clamped
+     * to yesterday before the query runs, so a row for today — which should never exist, but
+     * would be wrong if it did — can never be served.
+     */
+    public NavigableMap&lt;LocalDate, ValuationSnapshot&gt; completedSnapshots(
+            long portfolioId, CurrencyCode currency, LocalDate from, LocalDate to) {
+
+<span class="fc" id="L61">        LocalDate lastCompleted = LocalDate.now(clock).minusDays(1);</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        LocalDate effectiveTo = to.isAfter(lastCompleted) ? lastCompleted : to;</span>
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (from.isAfter(effectiveTo)) {</span>
+<span class="nc" id="L64">            return new TreeMap&lt;&gt;();</span>
+        }
+<span class="fc" id="L66">        return repository.findRange(portfolioId, currency, from, effectiveTo);</span>
+    }
+
+    /**
+     * Memoises days computed by the fold. Best-effort by design: this runs on a read path, and a
+     * failed cache write must never turn a working chart into a 500. The next request recomputes
+     * the day and tries again.
+     */
+    public void store(List&lt;ValuationSnapshot&gt; snapshots) {
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (snapshots.isEmpty()) {</span>
+<span class="fc" id="L76">            return;</span>
+        }
+        try {
+<span class="fc" id="L79">            repository.upsertAll(snapshots);</span>
+<span class="nc" id="L80">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L81">            log.warn(&quot;Could not memoise {} valuation snapshot(s) for portfolio {}: {}&quot;,</span>
+<span class="nc" id="L82">                    snapshots.size(), snapshots.get(0).portfolioId(), e.getMessage());</span>
+<span class="fc" id="L83">        }</span>
+<span class="fc" id="L84">    }</span>
+
+    /**
+     * Drops every snapshot on or after {@code from}.
+     *
+     * &lt;p&gt;Called from inside {@code TransactionService}'s transaction, so the invalidation commits
+     * or rolls back with the write that caused it — a delete that rolled back must not leave the
+     * cache emptied, and a delete that committed must not leave it populated
+     * (CLAUDE.md non-negotiable #12). Unlike {@link #store}, this one is &lt;b&gt;not&lt;/b&gt; best-effort:
+     * a failure here has to take the write down with it.
+     */
+    public void invalidateFrom(long portfolioId, LocalDate from) {
+<span class="fc" id="L96">        int dropped = repository.deleteFrom(portfolioId, from);</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        if (dropped &gt; 0) {</span>
+<span class="fc" id="L98">            log.debug(&quot;Invalidated {} valuation snapshot(s) for portfolio {} from {}&quot;, dropped, portfolioId, from);</span>
+        }
+<span class="fc" id="L100">    }</span>
+
+    /** Everything, for a portfolio being deleted outright. */
+    public void invalidateAll(long portfolioId) {
+<span class="nc" id="L104">        repository.deleteAllForPortfolio(portfolioId);</span>
+<span class="nc" id="L105">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

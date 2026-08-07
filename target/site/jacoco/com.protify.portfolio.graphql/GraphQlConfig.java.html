@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GraphQlConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.graphql</a> &gt; <span class="el_source">GraphQlConfig.java</span></div><h1>GraphQlConfig.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.graphql;
+
+import graphql.analysis.MaxQueryComplexityInstrumentation;
+import graphql.analysis.MaxQueryDepthInstrumentation;
+import graphql.execution.instrumentation.ChainedInstrumentation;
+import graphql.execution.instrumentation.Instrumentation;
+import graphql.language.StringValue;
+import graphql.schema.Coercing;
+import graphql.schema.CoercingParseLiteralException;
+import graphql.schema.CoercingParseValueException;
+import graphql.schema.CoercingSerializeException;
+import graphql.schema.GraphQLScalarType;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import org.springframework.boot.autoconfigure.graphql.GraphQlSourceBuilderCustomizer;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.graphql.execution.RuntimeWiringConfigurer;
+
+/**
+ * day-5-dev-C.md D5-C1: &quot;query depth limit 6, complexity limit 200 — without them, a nested
+ * query is a denial-of-service.&quot; Wired directly on {@link GraphQlSourceBuilderCustomizer}
+ * rather than left to component-scanned {@code Instrumentation} beans, so it does not depend on
+ * exactly which {@code Instrumentation} beans Boot's autoconfiguration happens to collect.
+ *
+ * &lt;p&gt;{@code Date}/{@code DateTime} are registered here rather than relying on GraphQL Java's
+ * built-in {@code String} scalar to coerce a {@link LocalDate}/{@link Instant} implicitly —
+ * the Spring GraphQL docs are explicit that Jackson-style serialisation isn't in play server
+ * side, and a custom scalar is the documented way to carry a non-String Java type over the wire.
+ */
+@Configuration(proxyBeanMethods = false)
+<span class="fc" id="L33">public class GraphQlConfig {</span>
+
+    private static final int MAX_QUERY_DEPTH = 6;
+    private static final int MAX_QUERY_COMPLEXITY = 200;
+
+    @Bean
+    public GraphQlSourceBuilderCustomizer queryLimitsCustomizer() {
+<span class="fc" id="L40">        Instrumentation limits = new ChainedInstrumentation(List.of(</span>
+                new MaxQueryDepthInstrumentation(MAX_QUERY_DEPTH),
+                new MaxQueryComplexityInstrumentation(MAX_QUERY_COMPLEXITY)));
+<span class="fc" id="L43">        return builder -&gt; builder.configureGraphQl(gqlBuilder -&gt; gqlBuilder.instrumentation(limits));</span>
+    }
+
+    @Bean
+    public RuntimeWiringConfigurer scalarsConfigurer() {
+<span class="fc" id="L48">        return wiring -&gt; wiring.scalar(dateScalar()).scalar(dateTimeScalar());</span>
+    }
+
+    private static GraphQLScalarType dateScalar() {
+<span class="fc" id="L52">        return GraphQLScalarType.newScalar()</span>
+<span class="fc" id="L53">                .name(&quot;Date&quot;)</span>
+<span class="fc" id="L54">                .description(&quot;ISO-8601 calendar date&quot;)</span>
+<span class="fc" id="L55">                .coercing(new Coercing&lt;LocalDate, String&gt;() {</span>
+                    @Override
+                    public String serialize(Object input) throws CoercingSerializeException {
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">                        if (input instanceof LocalDate date) {</span>
+<span class="fc" id="L59">                            return date.toString();</span>
+                        }
+<span class="nc" id="L61">                        throw new CoercingSerializeException(&quot;Expected a LocalDate, got &quot; + input);</span>
+                    }
+
+                    @Override
+                    public LocalDate parseValue(Object input) throws CoercingParseValueException {
+                        try {
+<span class="nc" id="L67">                            return LocalDate.parse(String.valueOf(input));</span>
+<span class="nc" id="L68">                        } catch (Exception e) {</span>
+<span class="nc" id="L69">                            throw new CoercingParseValueException(&quot;Not a valid Date: &quot; + input, e);</span>
+                        }
+                    }
+
+                    @Override
+                    public LocalDate parseLiteral(Object input) throws CoercingParseLiteralException {
+<span class="pc bpc" id="L75" title="1 of 2 branches missed.">                        if (input instanceof StringValue stringValue) {</span>
+                            try {
+<span class="fc" id="L77">                                return LocalDate.parse(stringValue.getValue());</span>
+<span class="nc" id="L78">                            } catch (Exception e) {</span>
+<span class="nc" id="L79">                                throw new CoercingParseLiteralException(</span>
+<span class="nc" id="L80">                                        &quot;Not a valid Date: &quot; + stringValue.getValue(), e);</span>
+                            }
+                        }
+<span class="nc" id="L83">                        throw new CoercingParseLiteralException(&quot;Expected a StringValue for Date&quot;);</span>
+                    }
+                })
+<span class="fc" id="L86">                .build();</span>
+    }
+
+    private static GraphQLScalarType dateTimeScalar() {
+<span class="fc" id="L90">        return GraphQLScalarType.newScalar()</span>
+<span class="fc" id="L91">                .name(&quot;DateTime&quot;)</span>
+<span class="fc" id="L92">                .description(&quot;ISO-8601 instant&quot;)</span>
+<span class="fc" id="L93">                .coercing(new Coercing&lt;Instant, String&gt;() {</span>
+                    @Override
+                    public String serialize(Object input) throws CoercingSerializeException {
+<span class="nc bnc" id="L96" title="All 2 branches missed.">                        if (input instanceof Instant instant) {</span>
+<span class="nc" id="L97">                            return instant.toString();</span>
+                        }
+<span class="nc" id="L99">                        throw new CoercingSerializeException(&quot;Expected an Instant, got &quot; + input);</span>
+                    }
+
+                    @Override
+                    public Instant parseValue(Object input) throws CoercingParseValueException {
+                        try {
+<span class="nc" id="L105">                            return Instant.parse(String.valueOf(input));</span>
+<span class="nc" id="L106">                        } catch (Exception e) {</span>
+<span class="nc" id="L107">                            throw new CoercingParseValueException(&quot;Not a valid DateTime: &quot; + input, e);</span>
+                        }
+                    }
+
+                    @Override
+                    public Instant parseLiteral(Object input) throws CoercingParseLiteralException {
+<span class="nc bnc" id="L113" title="All 2 branches missed.">                        if (input instanceof StringValue stringValue) {</span>
+                            try {
+<span class="nc" id="L115">                                return Instant.parse(stringValue.getValue());</span>
+<span class="nc" id="L116">                            } catch (Exception e) {</span>
+<span class="nc" id="L117">                                throw new CoercingParseLiteralException(</span>
+<span class="nc" id="L118">                                        &quot;Not a valid DateTime: &quot; + stringValue.getValue(), e);</span>
+                            }
+                        }
+<span class="nc" id="L121">                        throw new CoercingParseLiteralException(&quot;Expected a StringValue for DateTime&quot;);</span>
+                    }
+                })
+<span class="fc" id="L124">                .build();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

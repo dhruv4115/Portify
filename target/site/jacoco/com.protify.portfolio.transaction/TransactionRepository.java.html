@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.transaction</a> &gt; <span class="el_source">TransactionRepository.java</span></div><h1>TransactionRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.transaction;
+
+import com.protify.portfolio.support.BaseRepository;
+import com.protify.portfolio.support.Page;
+import com.protify.portfolio.support.Pageable;
+import java.sql.Timestamp;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Optional;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+@Repository
+public class TransactionRepository extends BaseRepository {
+
+    public TransactionRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L18">        super(jdbcTemplate);</span>
+<span class="fc" id="L19">    }</span>
+
+    public long insert(Txn txn) {
+<span class="fc" id="L22">        String sql = &quot;&quot;&quot;</span>
+                INSERT INTO txn (portfolio_id, instrument_id, txn_type, quantity, price, fees, currency, executed_at, note)
+                VALUES (:portfolioId, :instrumentId, :txnType, :quantity, :price, :fees, :currency, :executedAt, :note)
+                &quot;&quot;&quot;;
+<span class="fc" id="L26">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L27">                .addValue(&quot;portfolioId&quot;, txn.portfolioId())</span>
+<span class="fc" id="L28">                .addValue(&quot;instrumentId&quot;, txn.instrumentId())</span>
+<span class="fc" id="L29">                .addValue(&quot;txnType&quot;, txn.txnType().name())</span>
+<span class="fc" id="L30">                .addValue(&quot;quantity&quot;, txn.quantity())</span>
+<span class="fc" id="L31">                .addValue(&quot;price&quot;, txn.price())</span>
+<span class="fc" id="L32">                .addValue(&quot;fees&quot;, txn.fees())</span>
+<span class="fc" id="L33">                .addValue(&quot;currency&quot;, txn.currency().name())</span>
+<span class="fc" id="L34">                .addValue(&quot;executedAt&quot;, Timestamp.from(txn.executedAt()))</span>
+<span class="fc" id="L35">                .addValue(&quot;note&quot;, txn.note());</span>
+<span class="fc" id="L36">        return insert(sql, params);</span>
+    }
+
+    /** Ordered by {@code executed_at} then {@code id} — two transactions at the same instant
+     * must fold deterministically, or the projection is non-reproducible. */
+    public List&lt;Txn&gt; findByPortfolioOrderByExecutedAt(long portfolioId) {
+<span class="fc" id="L42">        String sql = &quot;SELECT * FROM txn WHERE portfolio_id = :portfolioId ORDER BY executed_at, id&quot;;</span>
+<span class="fc" id="L43">        var params = new MapSqlParameterSource(&quot;portfolioId&quot;, portfolioId);</span>
+<span class="fc" id="L44">        return jdbcTemplate.query(sql, params, new TxnRowMapper());</span>
+    }
+
+    /** One transaction, scoped to its portfolio so a caller cannot read another portfolio's row
+     * by guessing an id (CLAUDE.md non-negotiable #3). Read before a delete, because the row's
+     * {@code executed_at} decides how far back the valuation cache is invalidated and it is gone
+     * once the delete has run (day-5-dev-A.md D5-A2). */
+    public Optional&lt;Txn&gt; findByIdAndPortfolio(long txnId, long portfolioId) {
+<span class="fc" id="L52">        String sql = &quot;SELECT * FROM txn WHERE id = :id AND portfolio_id = :portfolioId&quot;;</span>
+<span class="fc" id="L53">        var params = new MapSqlParameterSource().addValue(&quot;id&quot;, txnId).addValue(&quot;portfolioId&quot;, portfolioId);</span>
+<span class="fc" id="L54">        return jdbcTemplate.query(sql, params, new TxnRowMapper()).stream().findFirst();</span>
+    }
+
+    public Page&lt;Txn&gt; findByPortfolioFiltered(long portfolioId, TxnFilter filter, Pageable pageable) {
+<span class="fc" id="L58">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L59">                .addValue(&quot;portfolioId&quot;, portfolioId)</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">                .addValue(&quot;type&quot;, filter.type() == null ? null : filter.type().name())</span>
+<span class="fc" id="L61">                .addValue(&quot;symbol&quot;, filter.symbol())</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">                .addValue(&quot;from&quot;, filter.from() == null ? null : Timestamp.from(filter.from().atStartOfDay(ZoneOffset.UTC).toInstant()))</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">                .addValue(&quot;to&quot;, filter.to() == null ? null : Timestamp.from(filter.to().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant()));</span>
+
+<span class="fc" id="L65">        String whereClause = &quot;&quot;&quot;</span>
+                WHERE t.portfolio_id = :portfolioId
+                  AND (:type IS NULL OR t.txn_type = :type)
+                  AND (:symbol IS NULL OR i.symbol = :symbol)
+                  AND (:from IS NULL OR t.executed_at &gt;= :from)
+                  AND (:to IS NULL OR t.executed_at &lt; :to)
+                &quot;&quot;&quot;;
+
+<span class="fc" id="L73">        Long total = jdbcTemplate.queryForObject(</span>
+                &quot;SELECT COUNT(*) FROM txn t LEFT JOIN instrument i ON t.instrument_id = i.id &quot; + whereClause,
+                params, Long.class);
+
+<span class="fc" id="L77">        String pageSql = &quot;SELECT t.* FROM txn t LEFT JOIN instrument i ON t.instrument_id = i.id &quot; + whereClause</span>
+                + &quot; ORDER BY t.executed_at DESC, t.id DESC LIMIT :limit OFFSET :offset&quot;;
+<span class="fc" id="L79">        params.addValue(&quot;limit&quot;, pageable.size()).addValue(&quot;offset&quot;, pageable.offset());</span>
+
+<span class="fc" id="L81">        List&lt;Txn&gt; content = jdbcTemplate.query(pageSql, params, new TxnRowMapper());</span>
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">        return new Page&lt;&gt;(content, pageable.page(), pageable.size(), total == null ? 0 : total);</span>
+    }
+
+    /** Returns the row count deleted (0 or 1) so the caller can tell &quot;deleted&quot; from &quot;no such
+     * transaction in this portfolio&quot; without a separate existence check. */
+    public int deleteByIdAndPortfolio(long txnId, long portfolioId) {
+<span class="fc" id="L88">        String sql = &quot;DELETE FROM txn WHERE id = :id AND portfolio_id = :portfolioId&quot;;</span>
+<span class="fc" id="L89">        var params = new MapSqlParameterSource().addValue(&quot;id&quot;, txnId).addValue(&quot;portfolioId&quot;, portfolioId);</span>
+<span class="fc" id="L90">        return jdbcTemplate.update(sql, params);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

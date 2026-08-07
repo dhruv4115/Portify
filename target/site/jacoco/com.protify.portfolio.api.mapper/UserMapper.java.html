@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.mapper</a> &gt; <span class="el_source">UserMapper.java</span></div><h1>UserMapper.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.mapper;
+
+import com.protify.portfolio.api.dto.UserResponse;
+import com.protify.portfolio.api.user.CurrentUser;
+import org.springframework.stereotype.Component;
+
+/**
+ * Explicit, hand-written mapping — no MapStruct, no reflection (day-1-dev-C.md D1-C3).
+ * {@link CurrentUser} is Dev C's temporary seam standing in for Dev B's {@code AppUser}; this
+ * mapper (not {@code MeController}) is what changes the day that type is replaced with the
+ * real persistence entity.
+ */
+@Component
+<span class="fc" id="L14">public class UserMapper {</span>
+
+    public UserResponse toResponse(CurrentUser currentUser) {
+<span class="fc" id="L17">        return new UserResponse(</span>
+<span class="fc" id="L18">                currentUser.id(),</span>
+<span class="fc" id="L19">                currentUser.email(),</span>
+<span class="fc" id="L20">                currentUser.displayName(),</span>
+<span class="fc" id="L21">                currentUser.pictureUrl(),</span>
+<span class="fc" id="L22">                currentUser.createdAt());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

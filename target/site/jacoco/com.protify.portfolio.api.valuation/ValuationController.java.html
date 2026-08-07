@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.valuation</a> &gt; <span class="el_source">ValuationController.java</span></div><h1>ValuationController.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.valuation;
+
+import com.protify.portfolio.api.dto.ValuationResponse;
+import com.protify.portfolio.api.mapper.ValuationMapper;
+import com.protify.portfolio.api.user.CurrentUserResolver;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.valuation.ValuationService;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+/**
+ * API_CONTRACT.md §11 (day-3-dev-C.md D3-C2). Validate, delegate, map: every number is Dev A's
+ * {@link ValuationService}, and the two rules that can fail — {@code asOf} earlier than the first
+ * transaction, and an unknown {@code currency} — surface as 400s from that service and from enum
+ * binding respectively, not from an {@code if} here.
+ */
+@RestController
+@RequestMapping(&quot;/portfolios/{portfolioId}/valuation&quot;)
+public class ValuationController {
+
+    private final ValuationService valuationService;
+    private final ValuationMapper valuationMapper;
+    private final CurrentUserResolver currentUserResolver;
+
+    public ValuationController(ValuationService valuationService, ValuationMapper valuationMapper,
+<span class="fc" id="L32">            CurrentUserResolver currentUserResolver) {</span>
+<span class="fc" id="L33">        this.valuationService = valuationService;</span>
+<span class="fc" id="L34">        this.valuationMapper = valuationMapper;</span>
+<span class="fc" id="L35">        this.currentUserResolver = currentUserResolver;</span>
+<span class="fc" id="L36">    }</span>
+
+    /**
+     * @param asOf defaults to today in &lt;b&gt;UTC&lt;/b&gt; (CLAUDE.md non-negotiable #9), not the server's
+     *             local zone — a valuation must not shift by a day depending on where it runs
+     */
+    @GetMapping
+    public ValuationResponse valuate(
+            @PathVariable long portfolioId,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate asOf,
+            @RequestParam(required = false) CurrencyCode currency) {
+<span class="fc" id="L47">        long userId = currentUserResolver.resolve().id();</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        LocalDate effectiveAsOf = asOf != null ? asOf : LocalDate.now(ZoneOffset.UTC);</span>
+
+<span class="fc" id="L50">        return valuationMapper.toResponse(</span>
+<span class="fc" id="L51">                valuationService.valuate(userId, portfolioId, effectiveAsOf, currency));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

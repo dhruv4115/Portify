@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GraphQlExceptionResolver.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.graphql</a> &gt; <span class="el_source">GraphQlExceptionResolver.java</span></div><h1>GraphQlExceptionResolver.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.graphql;
+
+import com.protify.portfolio.api.error.RequestValidationException;
+import com.protify.portfolio.common.error.CurrencyMismatchException;
+import com.protify.portfolio.common.error.DomainException;
+import com.protify.portfolio.common.error.InsufficientQuantityException;
+import com.protify.portfolio.common.error.NotFoundException;
+import com.protify.portfolio.common.error.UpstreamException;
+import com.protify.portfolio.common.error.ValidationException;
+import graphql.GraphQLError;
+import graphql.GraphqlErrorBuilder;
+import graphql.schema.DataFetchingEnvironment;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.UUID;
+import org.slf4j.MDC;
+import org.springframework.graphql.execution.DataFetcherExceptionResolverAdapter;
+import org.springframework.graphql.execution.ErrorType;
+import org.springframework.stereotype.Component;
+
+/**
+ * day-5-dev-C.md D5-C1: &quot;errors use GraphQL's errors[] array, not ProblemDetail — the spec
+ * mandates it. Put correlationId and a classification slug in extensions so failures stay
+ * traceable across both APIs.&quot; The classification mapping mirrors {@code
+ * GlobalExceptionHandler}'s (REST's equivalent single choke point) so the same domain exception
+ * always reads the same way regardless of which API surfaced it.
+ *
+ * &lt;p&gt;Anything not matched here (a bug, not a domain rule) falls through to Spring GraphQL's own
+ * default handling — an {@code INTERNAL_ERROR} with a generic message — same non-negotiable as
+ * {@code GlobalExceptionHandler#handleUnexpected}: no stack trace, no SQL fragment, no {@code
+ * com.protify} class name ever reaches a response body.
+ */
+@Component
+<span class="fc" id="L34">public class GraphQlExceptionResolver extends DataFetcherExceptionResolverAdapter {</span>
+
+    private static final String MDC_CORRELATION_ID_KEY = &quot;correlationId&quot;;
+
+    @Override
+    protected GraphQLError resolveToSingleError(Throwable ex, DataFetchingEnvironment env) {
+<span class="nc" id="L40">        ErrorType type = classify(ex);</span>
+<span class="nc bnc" id="L41" title="All 2 branches missed.">        if (type == null) {</span>
+<span class="nc" id="L42">            return null;</span>
+        }
+
+<span class="nc" id="L45">        Map&lt;String, Object&gt; extensions = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L46">        extensions.put(&quot;correlationId&quot;, correlationId());</span>
+<span class="nc" id="L47">        extensions.put(&quot;classification&quot;, type.name());</span>
+
+<span class="nc" id="L49">        return GraphqlErrorBuilder.newError(env)</span>
+<span class="nc" id="L50">                .errorType(type)</span>
+<span class="nc" id="L51">                .message(safeMessage(ex))</span>
+<span class="nc" id="L52">                .extensions(extensions)</span>
+<span class="nc" id="L53">                .build();</span>
+    }
+
+    private static ErrorType classify(Throwable ex) {
+<span class="nc bnc" id="L57" title="All 7 branches missed.">        return switch (ex) {</span>
+<span class="nc" id="L58">            case NotFoundException e -&gt; ErrorType.NOT_FOUND;</span>
+<span class="nc" id="L59">            case ValidationException e -&gt; ErrorType.BAD_REQUEST;</span>
+<span class="nc" id="L60">            case InsufficientQuantityException e -&gt; ErrorType.BAD_REQUEST;</span>
+<span class="nc" id="L61">            case CurrencyMismatchException e -&gt; ErrorType.BAD_REQUEST;</span>
+<span class="nc" id="L62">            case UpstreamException e -&gt; ErrorType.INTERNAL_ERROR;</span>
+<span class="nc" id="L63">            case RequestValidationException e -&gt; ErrorType.BAD_REQUEST;</span>
+<span class="nc" id="L64">            default -&gt; null;</span>
+        };
+    }
+
+    private static String safeMessage(Throwable ex) {
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        if (ex instanceof DomainException domainException) {</span>
+<span class="nc" id="L70">            return domainException.getMessage();</span>
+        }
+<span class="nc bnc" id="L72" title="All 2 branches missed.">        if (ex instanceof RequestValidationException requestValidationException) {</span>
+<span class="nc" id="L73">            return requestValidationException.getMessage();</span>
+        }
+<span class="nc" id="L75">        return &quot;An unexpected error occurred.&quot;;</span>
+    }
+
+    private static String correlationId() {
+<span class="nc" id="L79">        String mdc = MDC.get(MDC_CORRELATION_ID_KEY);</span>
+<span class="nc bnc" id="L80" title="All 2 branches missed.">        return mdc != null ? mdc : UUID.randomUUID().toString();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

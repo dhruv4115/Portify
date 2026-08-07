@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.transaction</a> &gt; <span class="el_source">TransactionController.java</span></div><h1>TransactionController.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.transaction;
+
+import com.protify.portfolio.api.dto.CreateTransactionRequest;
+import com.protify.portfolio.api.dto.PageResponse;
+import com.protify.portfolio.api.dto.TransactionResponse;
+import com.protify.portfolio.api.mapper.TransactionMapper;
+import com.protify.portfolio.api.user.CurrentUserResolver;
+import com.protify.portfolio.common.enums.TransactionType;
+import com.protify.portfolio.support.Page;
+import com.protify.portfolio.support.Pageable;
+import com.protify.portfolio.transaction.RecordTransactionCommand;
+import com.protify.portfolio.transaction.RecordTransactionResult;
+import com.protify.portfolio.transaction.TransactionService;
+import com.protify.portfolio.transaction.TxnFilter;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import java.net.URI;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+/**
+ * The customer's &quot;add&quot; and &quot;remove&quot; (day-3-dev-C.md D3-C1), API_CONTRACT.md §7–§9. Validates,
+ * delegates, maps — the domain rules (sell exceeding a holding, unknown symbol, currency
+ * mismatch, the negative-cash warning) all live in Dev A's {@link TransactionService} and reach
+ * the client through {@code GlobalExceptionHandler}; nothing here inspects them.
+ *
+ * &lt;p&gt;Every method resolves {@code userId} first and passes it into every call, so a portfolio
+ * belonging to someone else is a 404 rather than a 403, and so is one of their transactions
+ * addressed through a portfolio path of your own — {@code deleteByIdAndPortfolio} matches on both
+ * ids, so it deletes nothing and reports not-found.
+ *
+ * &lt;p&gt;Ordering is fixed at the contract's default {@code executedAt,desc} (§0.6): the {@code sort}
+ * parameter is not accepted, because {@code TransactionRepository} hard-codes that order and it
+ * is Dev A's file. Raised for the team rather than answered with a parameter that quietly ignores
+ * whatever it is given.
+ */
+@RestController
+@RequestMapping(&quot;/portfolios/{portfolioId}/transactions&quot;)
+@Validated
+public class TransactionController {
+
+    /** API_CONTRACT.md §0.6. */
+    private static final int MAX_PAGE_SIZE = 100;
+
+    private final TransactionService transactionService;
+    private final TransactionQueryService transactionQueryService;
+    private final TransactionMapper transactionMapper;
+    private final CurrentUserResolver currentUserResolver;
+
+    public TransactionController(
+            TransactionService transactionService,
+            TransactionQueryService transactionQueryService,
+            TransactionMapper transactionMapper,
+<span class="fc" id="L68">            CurrentUserResolver currentUserResolver) {</span>
+<span class="fc" id="L69">        this.transactionService = transactionService;</span>
+<span class="fc" id="L70">        this.transactionQueryService = transactionQueryService;</span>
+<span class="fc" id="L71">        this.transactionMapper = transactionMapper;</span>
+<span class="fc" id="L72">        this.currentUserResolver = currentUserResolver;</span>
+<span class="fc" id="L73">    }</span>
+
+    @PostMapping
+    public ResponseEntity&lt;TransactionResponse&gt; create(
+            @PathVariable long portfolioId,
+            @Valid @RequestBody CreateTransactionRequest request) {
+<span class="fc" id="L79">        long userId = currentUserResolver.resolve().id();</span>
+
+<span class="fc" id="L81">        RecordTransactionCommand command = transactionMapper.toCommand(request);</span>
+<span class="fc" id="L82">        RecordTransactionResult result = transactionService.record(userId, portfolioId, command);</span>
+<span class="fc" id="L83">        TransactionResponse body = transactionQueryService.describe(</span>
+<span class="fc" id="L84">                userId, portfolioId, result.txnId(), command, result.warnings());</span>
+
+<span class="fc" id="L86">        URI location = ServletUriComponentsBuilder.fromCurrentRequest()</span>
+<span class="fc" id="L87">                .path(&quot;/{txnId}&quot;)</span>
+<span class="fc" id="L88">                .buildAndExpand(result.txnId())</span>
+<span class="fc" id="L89">                .toUri();</span>
+<span class="fc" id="L90">        return ResponseEntity.created(location).body(body);</span>
+    }
+
+    /** Never 404 for an empty result — a portfolio with no transactions is a normal answer. */
+    @GetMapping
+    public PageResponse&lt;TransactionResponse&gt; list(
+            @PathVariable long portfolioId,
+            @RequestParam(required = false) TransactionType type,
+            @RequestParam(required = false) String symbol,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(defaultValue = &quot;0&quot;) @Min(0) int page,
+            @RequestParam(defaultValue = &quot;20&quot;) @Min(1) @Max(MAX_PAGE_SIZE) int size) {
+<span class="fc" id="L103">        long userId = currentUserResolver.resolve().id();</span>
+
+<span class="fc" id="L105">        Page&lt;TransactionResponse&gt; result = transactionQueryService.list(</span>
+                userId, portfolioId, new TxnFilter(type, symbol, from, to), new Pageable(page, size));
+<span class="fc" id="L107">        return PageResponse.from(result);</span>
+    }
+
+    @DeleteMapping(&quot;/{txnId}&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable long portfolioId, @PathVariable long txnId) {
+<span class="fc" id="L113">        long userId = currentUserResolver.resolve().id();</span>
+<span class="fc" id="L114">        transactionService.delete(userId, portfolioId, txnId);</span>
+<span class="fc" id="L115">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

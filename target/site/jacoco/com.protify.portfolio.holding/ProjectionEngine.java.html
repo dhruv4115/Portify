@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProjectionEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.holding</a> &gt; <span class="el_source">ProjectionEngine.java</span></div><h1>ProjectionEngine.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.holding;
+
+import com.protify.portfolio.common.error.InsufficientQuantityException;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.transaction.Txn;
+import java.math.BigDecimal;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * The pure fold every stored and computed holdings figure ultimately runs through
+ * (PLAN.md §5): a native run is upserted into {@code holding}, a base-currency run feeds
+ * valuation, and (Day 3) the same fold with a date cursor produces the performance series.
+ * No Spring, no JDBC, no {@code LocalDate.now()} — given the same input it always returns the
+ * same output, which is what makes &quot;delete a transaction and rebuild&quot; safe: it is the same
+ * code path as an ordinary write, not a special case that can drift from it.
+ *
+ * &lt;p&gt;FX (via {@link ProjectionContext#fxLookup()}) is applied only to the cash accumulator.
+ * {@code avgCost}/{@code realisedPnl} are computed from each transaction's native
+ * {@code price}/{@code fees} and are never converted, in either run (ADR-0011).
+ */
+public final class ProjectionEngine {
+
+    private ProjectionEngine() {
+    }
+
+    public static ProjectionResult project(List&lt;Txn&gt; orderedTxns, ProjectionContext ctx) {
+<span class="fc" id="L32">        List&lt;Txn&gt; sorted = new ArrayList&lt;&gt;(orderedTxns);</span>
+<span class="fc" id="L33">        sorted.sort(Comparator.comparing(Txn::executedAt).thenComparing(Txn::id, Comparator.nullsLast(Comparator.naturalOrder())));</span>
+
+<span class="fc" id="L35">        Map&lt;Long, HoldingState&gt; states = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L36">        BigDecimal cash = BigDecimal.ZERO;</span>
+
+<span class="fc bfc" id="L38" title="All 2 branches covered.">        for (Txn txn : sorted) {</span>
+<span class="fc" id="L39">            BigDecimal fxRate = ctx.fxLookup().rate(txn.currency(), txn.executedAt().atZone(ZoneOffset.UTC).toLocalDate());</span>
+<span class="fc" id="L40">            cash = cash.add(nativeCashFlow(states, txn).multiply(fxRate));</span>
+<span class="fc" id="L41">        }</span>
+
+<span class="fc" id="L43">        return new ProjectionResult(Map.copyOf(states), MoneyUtils.money(cash));</span>
+    }
+
+    /** Applies one transaction's effect on {@code states} and returns its native-currency cash delta. */
+    private static BigDecimal nativeCashFlow(Map&lt;Long, HoldingState&gt; states, Txn txn) {
+<span class="fc bfc" id="L48" title="All 6 branches covered.">        return switch (txn.txnType()) {</span>
+<span class="fc" id="L49">            case BUY -&gt; applyBuy(states, txn);</span>
+<span class="fc" id="L50">            case SELL -&gt; applySell(states, txn);</span>
+<span class="fc" id="L51">            case DIVIDEND -&gt; txn.price();</span>
+<span class="fc" id="L52">            case DEPOSIT -&gt; txn.price();</span>
+<span class="fc" id="L53">            case WITHDRAWAL -&gt; txn.price().negate();</span>
+<span class="fc" id="L54">            case FEE -&gt; txn.price().negate();</span>
+        };
+    }
+
+    private static BigDecimal applyBuy(Map&lt;Long, HoldingState&gt; states, Txn txn) {
+<span class="fc" id="L59">        HoldingState prev = states.get(txn.instrumentId());</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        BigDecimal prevQty = prev == null ? BigDecimal.ZERO : prev.quantity();</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        BigDecimal prevAvgCost = prev == null ? BigDecimal.ZERO : prev.avgCost();</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        BigDecimal prevRealisedPnl = prev == null ? BigDecimal.ZERO : prev.realisedPnl();</span>
+
+<span class="fc" id="L64">        BigDecimal newQty = prevQty.add(txn.quantity());</span>
+<span class="fc" id="L65">        BigDecimal totalCost = prevQty.multiply(prevAvgCost)</span>
+<span class="fc" id="L66">                .add(txn.quantity().multiply(txn.price()))</span>
+<span class="fc" id="L67">                .add(txn.fees());</span>
+<span class="fc" id="L68">        BigDecimal newAvgCost = totalCost.divide(newQty, MoneyUtils.MONEY_SCALE, MoneyUtils.ROUNDING);</span>
+
+<span class="fc" id="L70">        states.put(txn.instrumentId(), new HoldingState(</span>
+<span class="fc" id="L71">                txn.instrumentId(), MoneyUtils.quantity(newQty), newAvgCost, prevRealisedPnl));</span>
+
+<span class="fc" id="L73">        return txn.quantity().multiply(txn.price()).add(txn.fees()).negate();</span>
+    }
+
+    private static BigDecimal applySell(Map&lt;Long, HoldingState&gt; states, Txn txn) {
+<span class="fc" id="L77">        HoldingState prev = states.get(txn.instrumentId());</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">        BigDecimal held = prev == null ? BigDecimal.ZERO : prev.quantity();</span>
+
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        if (held.compareTo(txn.quantity()) &lt; 0) {</span>
+<span class="fc" id="L81">            throw new InsufficientQuantityException(String.valueOf(txn.instrumentId()), txn.quantity(), held);</span>
+        }
+
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        BigDecimal avgCost = prev == null ? BigDecimal.ZERO : prev.avgCost();</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        BigDecimal prevRealisedPnl = prev == null ? BigDecimal.ZERO : prev.realisedPnl();</span>
+<span class="fc" id="L86">        BigDecimal newQty = held.subtract(txn.quantity());</span>
+<span class="fc" id="L87">        BigDecimal realisedPnlDelta = txn.price().subtract(avgCost).multiply(txn.quantity()).subtract(txn.fees());</span>
+<span class="fc" id="L88">        BigDecimal newRealisedPnl = MoneyUtils.money(prevRealisedPnl.add(realisedPnlDelta));</span>
+
+<span class="fc" id="L90">        states.put(txn.instrumentId(), new HoldingState(</span>
+<span class="fc" id="L91">                txn.instrumentId(), MoneyUtils.quantity(newQty), avgCost, newRealisedPnl));</span>
+
+<span class="fc" id="L93">        return txn.quantity().multiply(txn.price()).subtract(txn.fees());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,225 @@
+/**
+ * Design tokens — the single source of truth for every colour, radius, shadow and easing.
+ *
+ * <p>Two layers, deliberately. The `:root` / `[data-theme]` blocks hold *runtime* custom
+ * properties, so flipping the theme is one attribute write on <html> with no re-render and no
+ * flash. The `@theme inline` block republishes those same variables to Tailwind, which is what
+ * makes `bg-surface` or `text-ink-2` follow the theme instead of freezing whichever value was
+ * current at build time.
+ *
+ * <p>Chart series colours are not hand-picked. They are the validated eight-hue categorical
+ * palette, stepped separately for each mode and checked against this app's own surfaces
+ * (#ffffff light, #12141a dark) for the lightness band, chroma floor, colour-blind separation,
+ * normal-vision separation and contrast. Light-mode slots 3, 4 and 5 sit below 3:1 on white,
+ * which is legal only because every chart that uses them ships a legend with visible labels and
+ * values — that legend is the required relief channel, not decoration.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Planes and surfaces */
+  --plane: #f6f7f9;
+  --plane-accent: #eef1f6;
+  --surface: #ffffff;
+  --surface-2: #f4f5f8;
+  --surface-3: #eceef3;
+  --surface-inset: #f8f9fb;
+  --overlay: rgb(12 15 22 / 0.45);
+
+  /* Hairlines */
+  --border: #e4e7ec;
+  --border-strong: #d3d8e0;
+  --border-subtle: #eef0f4;
+
+  /* Ink */
+  --ink: #0e1116;
+  --ink-2: #4b5361;
+  --ink-3: #6b7280;
+
+  /* Brand */
+  --brand: #4f46e5;
+  --brand-hover: #4338ca;
+  --brand-active: #3730a3;
+  --brand-text: #4338ca;
+  --brand-on: #ffffff;
+  --brand-soft: rgb(79 70 229 / 0.09);
+  --brand-soft-hover: rgb(79 70 229 / 0.14);
+  --brand-ring: rgb(79 70 229 / 0.35);
+
+  /* Semantic — P&L and state. Always paired with an icon, a sign or a label. */
+  --pos: #047857;
+  --pos-soft: rgb(4 120 87 / 0.1);
+  --neg: #b91c1c;
+  --neg-soft: rgb(185 28 28 / 0.1);
+  --warn: #92400e;
+  --warn-soft: #fdf4e3;
+  --warn-border: #f2dcb4;
+  --info: #1d4ed8;
+  --info-soft: rgb(29 78 216 / 0.1);
+
+  /* Chart chrome */
+  --grid: #e8eaef;
+  --axis: #6b7280;
+
+  /* Validated categorical series — light steps */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #4a3aa7;
+  --series-8: #e34948;
+
+  /* Elevation. Layered rather than single-blur, so cards read as lifted paper not drop-shadowed
+     boxes. The colour is the ink hue at low alpha, never pure black. */
+  --shadow-xs: 0 1px 2px rgb(14 17 22 / 0.05);
+  --shadow-sm: 0 1px 2px rgb(14 17 22 / 0.05), 0 2px 6px rgb(14 17 22 / 0.04);
+  --shadow-md: 0 2px 4px rgb(14 17 22 / 0.04), 0 8px 20px rgb(14 17 22 / 0.07);
+  --shadow-lg: 0 4px 8px rgb(14 17 22 / 0.05), 0 18px 40px rgb(14 17 22 / 0.1);
+  --shadow-xl: 0 8px 16px rgb(14 17 22 / 0.06), 0 32px 64px rgb(14 17 22 / 0.14);
+  --shadow-brand: 0 4px 14px rgb(79 70 229 / 0.28);
+
+  /* Glass — used on the header and the command palette only. */
+  --glass: rgb(255 255 255 / 0.72);
+  --glass-border: rgb(14 17 22 / 0.07);
+
+  /* Decorative gradients */
+  --gradient-brand: linear-gradient(135deg, #6366f1 0%, #4f46e5 50%, #4338ca 100%);
+  --gradient-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.7) 0%, rgb(255 255 255 / 0) 100%);
+  --gradient-aurora: radial-gradient(60% 60% at 15% 0%, rgb(99 102 241 / 0.13) 0%, transparent 60%),
+    radial-gradient(50% 50% at 90% 5%, rgb(16 185 129 / 0.1) 0%, transparent 55%);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+
+  --plane: #0a0b0f;
+  --plane-accent: #0e1016;
+  --surface: #12141a;
+  --surface-2: #171a22;
+  --surface-3: #1d212b;
+  --surface-inset: #0f1116;
+  --overlay: rgb(0 0 0 / 0.65);
+
+  --border: #242936;
+  --border-strong: #333a4a;
+  --border-subtle: #1c202a;
+
+  --ink: #f2f4f8;
+  --ink-2: #a8b0c0;
+  --ink-3: #8b93a7;
+
+  --brand: #818cf8;
+  --brand-hover: #a5b4fc;
+  --brand-active: #c7d2fe;
+  --brand-text: #a5b4fc;
+  --brand-on: #10121a;
+  --brand-soft: rgb(129 140 248 / 0.14);
+  --brand-soft-hover: rgb(129 140 248 / 0.2);
+  --brand-ring: rgb(129 140 248 / 0.4);
+
+  --pos: #34d399;
+  --pos-soft: rgb(52 211 153 / 0.14);
+  --neg: #f87171;
+  --neg-soft: rgb(248 113 113 / 0.14);
+  --warn: #fbbf24;
+  --warn-soft: rgb(251 191 36 / 0.12);
+  --warn-border: rgb(251 191 36 / 0.28);
+  --info: #60a5fa;
+  --info-soft: rgb(96 165 250 / 0.14);
+
+  --grid: #232834;
+  --axis: #8b93a7;
+
+  /* Validated categorical series — dark steps. Same eight hues, re-stepped for this surface. */
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --series-4: #c98500;
+  --series-5: #d55181;
+  --series-6: #008300;
+  --series-7: #9085e9;
+  --series-8: #e66767;
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4), 0 2px 6px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 2px 4px rgb(0 0 0 / 0.35), 0 8px 20px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 4px 8px rgb(0 0 0 / 0.4), 0 18px 40px rgb(0 0 0 / 0.55);
+  --shadow-xl: 0 8px 16px rgb(0 0 0 / 0.45), 0 32px 64px rgb(0 0 0 / 0.65);
+  --shadow-brand: 0 4px 14px rgb(99 102 241 / 0.4);
+
+  --glass: rgb(18 20 26 / 0.72);
+  --glass-border: rgb(255 255 255 / 0.08);
+
+  --gradient-brand: linear-gradient(135deg, #818cf8 0%, #6366f1 50%, #4f46e5 100%);
+  --gradient-sheen: linear-gradient(180deg, rgb(255 255 255 / 0.05) 0%, rgb(255 255 255 / 0) 100%);
+  --gradient-aurora: radial-gradient(60% 60% at 15% 0%, rgb(99 102 241 / 0.16) 0%, transparent 60%),
+    radial-gradient(50% 50% at 90% 5%, rgb(16 185 129 / 0.1) 0%, transparent 55%);
+}
+
+/* Republished to Tailwind. `inline` keeps the `var()` reference intact, so a utility resolves
+   against whichever theme is live rather than baking in the light value. */
+@theme inline {
+  --color-plane: var(--plane);
+  --color-plane-accent: var(--plane-accent);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-inset: var(--surface-inset);
+
+  --color-hairline: var(--border);
+  --color-hairline-strong: var(--border-strong);
+  --color-hairline-subtle: var(--border-subtle);
+
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-text: var(--brand-text);
+  --color-brand-on: var(--brand-on);
+  --color-brand-soft: var(--brand-soft);
+
+  --color-pos: var(--pos);
+  --color-pos-soft: var(--pos-soft);
+  --color-neg: var(--neg);
+  --color-neg-soft: var(--neg-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-info: var(--info);
+
+  --color-series-1: var(--series-1);
+  --color-series-2: var(--series-2);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-series-6: var(--series-6);
+  --color-series-7: var(--series-7);
+  --color-series-8: var(--series-8);
+
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+
+  --font-sans: 'Inter var', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Motion. One easing vocabulary so nothing in the app animates with a different personality:
+     `out` for things arriving, `spring` for things the user just did, `smooth` for state changes. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-smooth: cubic-bezier(0.4, 0, 0.2, 1);
+}

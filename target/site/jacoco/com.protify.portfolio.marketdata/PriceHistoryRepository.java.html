@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PriceHistoryRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata</a> &gt; <span class="el_source">PriceHistoryRepository.java</span></div><h1>PriceHistoryRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata;
+
+import com.protify.portfolio.common.enums.PriceSource;
+import com.protify.portfolio.support.BaseRepository;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.Optional;
+import java.util.TreeMap;
+
+/**
+ * D2-B2 — explicit SQL, hand-written {@link PriceHistoryRowMapper}. Upsert via
+ * {@code INSERT ... ON DUPLICATE KEY UPDATE} on the {@code (instrument_id, price_date)} unique
+ * key, through {@link BaseRepository}, so it is idempotent under a repeated fetch for the same
+ * day.
+ */
+@Repository
+public class PriceHistoryRepository extends BaseRepository {
+
+<span class="fc" id="L27">    private static final PriceHistoryRowMapper ROW_MAPPER = new PriceHistoryRowMapper();</span>
+
+    private final NamedParameterJdbcTemplate jdbc;
+
+    public PriceHistoryRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L32">        super(jdbcTemplate);</span>
+<span class="fc" id="L33">        this.jdbc = jdbcTemplate;</span>
+<span class="fc" id="L34">    }</span>
+
+    /** The most recent row on or before {@code onOrBefore} — never a future row (a future price
+     * would invent history). */
+    public Optional&lt;PriceHistoryRow&gt; mostRecentOnOrBefore(long instrumentId, LocalDate onOrBefore) {
+<span class="fc" id="L39">        String sql = &quot;&quot;&quot;</span>
+                SELECT instrument_id, price_date, close_price, source
+                FROM price_history
+                WHERE instrument_id = :instrumentId AND price_date &lt;= :onOrBefore
+                ORDER BY price_date DESC
+                LIMIT 1
+                &quot;&quot;&quot;;
+<span class="fc" id="L46">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L47">                .addValue(&quot;instrumentId&quot;, instrumentId)</span>
+<span class="fc" id="L48">                .addValue(&quot;onOrBefore&quot;, onOrBefore);</span>
+<span class="fc" id="L49">        return jdbc.query(sql, params, ROW_MAPPER).stream().findFirst();</span>
+    }
+
+    /**
+     * ADR-0010 — one of the &quot;three flat queries&quot; {@code PerformanceService} folds in memory.
+     * No lower bound on {@code price_date}: the in-memory fold needs the row immediately
+     * before the requested range too, to forward-fill the range's first day correctly, and
+     * fetching the whole history per instrument is the trade-off ADR-0010 explicitly accepts.
+     */
+    public Map&lt;Long, NavigableMap&lt;LocalDate, BigDecimal&gt;&gt; findRange(Collection&lt;Long&gt; instrumentIds, LocalDate to) {
+<span class="fc" id="L59">        Map&lt;Long, NavigableMap&lt;LocalDate, BigDecimal&gt;&gt; result = new HashMap&lt;&gt;();</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (instrumentIds.isEmpty()) {</span>
+<span class="nc" id="L61">            return result;</span>
+        }
+<span class="fc" id="L63">        String sql = &quot;&quot;&quot;</span>
+                SELECT instrument_id, price_date, close_price
+                FROM price_history
+                WHERE instrument_id IN (:instrumentIds) AND price_date &lt;= :to
+                &quot;&quot;&quot;;
+<span class="fc" id="L68">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L69">                .addValue(&quot;instrumentIds&quot;, instrumentIds)</span>
+<span class="fc" id="L70">                .addValue(&quot;to&quot;, to);</span>
+<span class="fc" id="L71">        jdbc.query(sql, params, rs -&gt; {</span>
+<span class="fc" id="L72">            long instrumentId = rs.getLong(&quot;instrument_id&quot;);</span>
+<span class="fc" id="L73">            LocalDate date = rs.getDate(&quot;price_date&quot;).toLocalDate();</span>
+<span class="fc" id="L74">            BigDecimal close = rs.getBigDecimal(&quot;close_price&quot;);</span>
+<span class="fc" id="L75">            result.computeIfAbsent(instrumentId, k -&gt; new TreeMap&lt;&gt;()).put(date, close);</span>
+<span class="fc" id="L76">        });</span>
+<span class="fc" id="L77">        return result;</span>
+    }
+
+    public void upsert(long instrumentId, LocalDate priceDate, BigDecimal closePrice, PriceSource source) {
+<span class="fc" id="L81">        String sql = &quot;&quot;&quot;</span>
+                INSERT INTO price_history (instrument_id, price_date, close_price, source)
+                VALUES (:instrumentId, :priceDate, :closePrice, :source)
+                ON DUPLICATE KEY UPDATE
+                    close_price = VALUES(close_price),
+                    source = VALUES(source),
+                    fetched_at = CURRENT_TIMESTAMP(6)
+                &quot;&quot;&quot;;
+<span class="fc" id="L89">        MapSqlParameterSource params = new MapSqlParameterSource()</span>
+<span class="fc" id="L90">                .addValue(&quot;instrumentId&quot;, instrumentId)</span>
+<span class="fc" id="L91">                .addValue(&quot;priceDate&quot;, priceDate)</span>
+<span class="fc" id="L92">                .addValue(&quot;closePrice&quot;, closePrice)</span>
+<span class="fc" id="L93">                .addValue(&quot;source&quot;, source.name());</span>
+<span class="fc" id="L94">        upsert(sql, params);</span>
+<span class="fc" id="L95">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

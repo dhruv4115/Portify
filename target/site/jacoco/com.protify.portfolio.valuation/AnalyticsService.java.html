@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AnalyticsService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">AnalyticsService.java</span></div><h1>AnalyticsService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.valuation.spi.FxConversion;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NavigableMap;
+import org.springframework.stereotype.Service;
+
+/**
+ * day-5-dev-A.md D5-A1 / BACKLOG PM-18 — portfolio analytics, built on the performance series
+ * {@link PerformanceService} already produces rather than on a second walk of the history.
+ *
+ * &lt;p&gt;&lt;b&gt;Time-weighted return is the one worth getting right.&lt;/b&gt; A user who deposits ₹100,000 on
+ * a good day has not earned a return, and a naive {@code (end − start) / start} says they have.
+ * The correct treatment is to chain-link the sub-period returns &lt;em&gt;between&lt;/em&gt; cash flows:
+ *
+ * &lt;pre&gt;
+ *   r_i  = (V_i − F_i) / V_(i−1) − 1        one day's return, net of that day's transfers
+ *   TWR  = Π (1 + r_i) − 1                   the whole window, compounded
+ * &lt;/pre&gt;
+ *
+ * &lt;p&gt;where {@code V_i} is {@link PerformancePoint#totalValue()} — an end-of-day close, so
+ * {@code F_i} is already inside it and has to come back out before the day is judged — and
+ * {@code F_i} is that day's net external flow from {@link CashFlowSeries}. Everything else here
+ * falls out of the same two series: the drawdown, the best and worst day and the volatility are
+ * all measured on {@code r_i} or on the index it compounds into, never on raw portfolio value,
+ * so a withdrawal is never mistaken for a loss.
+ *
+ * &lt;p&gt;{@code simpleReturnPct} is reported alongside TWR deliberately — see
+ * {@link AnalyticsResult}. Ownership is enforced upstream: this class's first act is to call
+ * {@link PerformanceService#getPerformance}, which resolves the portfolio through
+ * {@code PortfolioService.getOrThrow}, so another user's portfolio is a 404 before any
+ * transaction is read (TEST_PLAN.md §4.7).
+ */
+@Service
+public class AnalyticsService {
+
+    /** Daily returns are divided at far more than money precision: a 365-link product compounds
+     * every rounding error in the chain, and the results are reported to four decimal places. */
+    private static final int RETURN_SCALE = MoneyUtils.MONEY_SCALE + 8;
+
+<span class="fc" id="L49">    private static final BigDecimal ONE_HUNDRED = new BigDecimal(&quot;100&quot;);</span>
+
+    /** Calendar days, matching the {@code (1 + TWR)^(365/days) − 1} the brief specifies — not
+     * 252 trading days, because this series has a point for every calendar day including
+     * weekends, and annualising daily returns has to use the same calendar that produced them. */
+<span class="fc" id="L54">    private static final BigDecimal DAYS_IN_YEAR = new BigDecimal(&quot;365&quot;);</span>
+
+    private final PerformanceService performanceService;
+    private final TransactionRepository transactionRepository;
+    private final FxConversion fxConversion;
+
+    public AnalyticsService(
+            PerformanceService performanceService,
+            TransactionRepository transactionRepository,
+<span class="fc" id="L63">            FxConversion fxConversion) {</span>
+<span class="fc" id="L64">        this.performanceService = performanceService;</span>
+<span class="fc" id="L65">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L66">        this.fxConversion = fxConversion;</span>
+<span class="fc" id="L67">    }</span>
+
+    public AnalyticsResult analyse(long userId, long portfolioId, LocalDate from, LocalDate to,
+            CurrencyCode requestedCurrency) {
+
+<span class="fc" id="L72">        PerformanceResult series = performanceService.getPerformance(userId, portfolioId, from, to, requestedCurrency);</span>
+<span class="fc" id="L73">        List&lt;PerformancePoint&gt; points = series.points();</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        if (points.isEmpty()) {</span>
+<span class="fc" id="L75">            return empty(series);</span>
+        }
+
+<span class="fc" id="L78">        LocalDate firstDate = points.get(0).date();</span>
+<span class="fc" id="L79">        LocalDate lastDate = points.get(points.size() - 1).date();</span>
+        // The window the flows are taken over is the window that was actually computed, not the
+        // requested one — a portfolio whose history starts mid-range has no points before it,
+        // and a flow with no point to attach to would silently vanish from the chain.
+<span class="fc" id="L83">        NavigableMap&lt;LocalDate, BigDecimal&gt; flows = CashFlowSeries.byDate(</span>
+<span class="fc" id="L84">                transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId),</span>
+<span class="fc" id="L85">                tradeDateFx(series.currency()), firstDate, lastDate);</span>
+
+<span class="fc" id="L87">        Chained chained = chainLink(points, flows);</span>
+<span class="fc" id="L88">        long days = ChronoUnit.DAYS.between(firstDate, lastDate);</span>
+
+<span class="fc" id="L90">        return new AnalyticsResult(</span>
+<span class="fc" id="L91">                series.portfolioId(),</span>
+<span class="fc" id="L92">                series.currency(),</span>
+<span class="fc" id="L93">                series.from(),</span>
+<span class="fc" id="L94">                series.to(),</span>
+                days,
+<span class="fc" id="L96">                pct(chained.growth().subtract(BigDecimal.ONE)),</span>
+<span class="fc" id="L97">                annualisedPct(chained.growth(), days),</span>
+<span class="fc" id="L98">                MoneyUtils.pctChange(points.get(0).totalValue(), points.get(points.size() - 1).totalValue()),</span>
+<span class="fc" id="L99">                series.summary().netContributions(),</span>
+<span class="fc" id="L100">                chained.drawdown(),</span>
+<span class="fc" id="L101">                chained.bestDay(),</span>
+<span class="fc" id="L102">                chained.worstDay(),</span>
+<span class="fc" id="L103">                volatilityPct(chained.returns()));</span>
+    }
+
+<span class="fc" id="L106">    private record Chained(BigDecimal growth, List&lt;BigDecimal&gt; returns, Drawdown drawdown,</span>
+            DayReturn bestDay, DayReturn worstDay) {
+    }
+
+    /**
+     * One pass over the series producing the compounded growth factor, every daily return, the
+     * peak-to-trough decline of the index, and the best and worst day. They share a loop because
+     * they share the definition of {@code r_i} — computing them separately is how the drawdown
+     * ends up measured on a different series than the return it is supposed to describe.
+     */
+    private static Chained chainLink(List&lt;PerformancePoint&gt; points, NavigableMap&lt;LocalDate, BigDecimal&gt; flows) {
+<span class="fc" id="L117">        BigDecimal growth = BigDecimal.ONE;</span>
+<span class="fc" id="L118">        BigDecimal peak = BigDecimal.ONE;</span>
+<span class="fc" id="L119">        LocalDate peakDate = points.get(0).date();</span>
+
+<span class="fc" id="L121">        BigDecimal worstDecline = BigDecimal.ZERO;</span>
+<span class="fc" id="L122">        LocalDate drawdownPeakDate = null;</span>
+<span class="fc" id="L123">        LocalDate drawdownTroughDate = null;</span>
+
+<span class="fc" id="L125">        List&lt;BigDecimal&gt; returns = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L126">        BigDecimal bestReturn = null;</span>
+<span class="fc" id="L127">        BigDecimal worstReturn = null;</span>
+<span class="fc" id="L128">        DayReturn bestDay = null;</span>
+<span class="fc" id="L129">        DayReturn worstDay = null;</span>
+
+<span class="fc bfc" id="L131" title="All 2 branches covered.">        for (int i = 1; i &lt; points.size(); i++) {</span>
+<span class="fc" id="L132">            LocalDate date = points.get(i).date();</span>
+<span class="fc" id="L133">            BigDecimal previousValue = points.get(i - 1).totalValue();</span>
+<span class="fc" id="L134">            BigDecimal value = points.get(i).totalValue();</span>
+<span class="fc" id="L135">            BigDecimal flow = flows.getOrDefault(date, BigDecimal.ZERO);</span>
+<span class="fc" id="L136">            BigDecimal marketChange = value.subtract(flow).subtract(previousValue);</span>
+
+            // safeDivide returns null rather than throwing when yesterday closed at exactly zero
+            // — a portfolio that went to zero and came back is a real case, and the link is
+            // skipped (a return of 0) rather than being infinite.
+<span class="fc" id="L141">            BigDecimal ratio = MoneyUtils.safeDivide(value.subtract(flow), previousValue, RETURN_SCALE);</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">            BigDecimal dayReturn = ratio == null ? BigDecimal.ZERO : ratio.subtract(BigDecimal.ONE);</span>
+<span class="fc" id="L143">            returns.add(dayReturn);</span>
+
+<span class="fc" id="L145">            DayReturn candidate = new DayReturn(date, pct(dayReturn), MoneyUtils.money(marketChange));</span>
+<span class="fc bfc" id="L146" title="All 4 branches covered.">            if (bestReturn == null || dayReturn.compareTo(bestReturn) &gt; 0) {</span>
+<span class="fc" id="L147">                bestReturn = dayReturn;</span>
+<span class="fc" id="L148">                bestDay = candidate;</span>
+            }
+<span class="fc bfc" id="L150" title="All 4 branches covered.">            if (worstReturn == null || dayReturn.compareTo(worstReturn) &lt; 0) {</span>
+<span class="fc" id="L151">                worstReturn = dayReturn;</span>
+<span class="fc" id="L152">                worstDay = candidate;</span>
+            }
+
+<span class="fc" id="L155">            growth = growth.multiply(BigDecimal.ONE.add(dayReturn), Compounding.MC);</span>
+<span class="fc bfc" id="L156" title="All 2 branches covered.">            if (growth.compareTo(peak) &gt; 0) {</span>
+<span class="fc" id="L157">                peak = growth;</span>
+<span class="fc" id="L158">                peakDate = date;</span>
+            } else {
+                // peak is seeded at 1 and only ever grows, so it is never zero here.
+<span class="fc" id="L161">                BigDecimal decline = MoneyUtils.safeDivide(growth, peak, RETURN_SCALE).subtract(BigDecimal.ONE);</span>
+<span class="fc bfc" id="L162" title="All 2 branches covered.">                if (decline.compareTo(worstDecline) &lt; 0) {</span>
+<span class="fc" id="L163">                    worstDecline = decline;</span>
+<span class="fc" id="L164">                    drawdownPeakDate = peakDate;</span>
+<span class="fc" id="L165">                    drawdownTroughDate = date;</span>
+                }
+            }
+        }
+
+<span class="fc" id="L170">        return new Chained(growth, returns,</span>
+<span class="fc" id="L171">                new Drawdown(pct(worstDecline), drawdownPeakDate, drawdownTroughDate), bestDay, worstDay);</span>
+    }
+
+    /** {@code (1 + TWR)^(365/days) − 1}. */
+    private static BigDecimal annualisedPct(BigDecimal growth, long days) {
+<span class="fc bfc" id="L176" title="All 2 branches covered.">        if (days &lt; 1) {</span>
+            // A single-day window has no elapsed time to project a year onto. Its TWR is 0,
+            // which is a fact; annualising it would be an invention.
+<span class="fc" id="L179">            return null;</span>
+        }
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">        if (growth.signum() &lt; 0) {</span>
+            // Only reachable when a withdrawal exceeded the portfolio's own value on some day.
+            // A negative growth factor has no real fractional power, so there is no answer.
+<span class="nc" id="L184">            return null;</span>
+        }
+<span class="pc bpc" id="L186" title="1 of 2 branches missed.">        if (growth.signum() == 0) {</span>
+<span class="nc" id="L187">            return pct(BigDecimal.ONE.negate());</span>
+        }
+<span class="fc" id="L189">        BigDecimal exponent = DAYS_IN_YEAR.divide(BigDecimal.valueOf(days), Compounding.MC);</span>
+<span class="fc" id="L190">        return pct(Compounding.pow(growth, exponent).subtract(BigDecimal.ONE));</span>
+    }
+
+    /** Sample standard deviation of the daily returns, annualised by {@code √365}. */
+    private static BigDecimal volatilityPct(List&lt;BigDecimal&gt; returns) {
+<span class="fc bfc" id="L195" title="All 2 branches covered.">        if (returns.size() &lt; 2) {</span>
+            // A sample standard deviation of one observation is undefined, not zero.
+<span class="fc" id="L197">            return null;</span>
+        }
+<span class="fc" id="L199">        BigDecimal sum = BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L200" title="All 2 branches covered.">        for (BigDecimal dayReturn : returns) {</span>
+<span class="fc" id="L201">            sum = sum.add(dayReturn);</span>
+<span class="fc" id="L202">        }</span>
+<span class="fc" id="L203">        BigDecimal mean = sum.divide(BigDecimal.valueOf(returns.size()), Compounding.MC);</span>
+
+<span class="fc" id="L205">        BigDecimal squaredDeviations = BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L206" title="All 2 branches covered.">        for (BigDecimal dayReturn : returns) {</span>
+<span class="fc" id="L207">            BigDecimal deviation = dayReturn.subtract(mean);</span>
+<span class="fc" id="L208">            squaredDeviations = squaredDeviations.add(deviation.multiply(deviation, Compounding.MC), Compounding.MC);</span>
+<span class="fc" id="L209">        }</span>
+<span class="fc" id="L210">        BigDecimal variance = squaredDeviations.divide(BigDecimal.valueOf(returns.size() - 1L), Compounding.MC);</span>
+<span class="fc" id="L211">        BigDecimal daily = Compounding.sqrt(variance);</span>
+<span class="fc" id="L212">        return pct(daily.multiply(Compounding.sqrt(DAYS_IN_YEAR), Compounding.MC));</span>
+    }
+
+    /** A portfolio with no transactions, or a window that closes before its first one, is a
+     * valid empty answer with a valid result — never a divide-by-zero (TEST_PLAN.md §4.9). */
+    private static AnalyticsResult empty(PerformanceResult series) {
+<span class="fc" id="L218">        return new AnalyticsResult(series.portfolioId(), series.currency(), series.from(), series.to(), 0L,</span>
+<span class="fc" id="L219">                pct(BigDecimal.ZERO), null, null, series.summary().netContributions(),</span>
+<span class="fc" id="L220">                new Drawdown(pct(BigDecimal.ZERO), null, null), null, null, null);</span>
+    }
+
+    /** A fraction to a percentage at money scale — {@code 0.102702} becomes {@code 10.2702},
+     * the same convention as {@link MoneyUtils#pctChange}. */
+    private static BigDecimal pct(BigDecimal fraction) {
+<span class="fc" id="L226">        return fraction.multiply(ONE_HUNDRED).setScale(MoneyUtils.MONEY_SCALE, MoneyUtils.ROUNDING);</span>
+    }
+
+    /** Transfers convert at their own trade date, never at the window's end (ADR-0011), and
+     * identity on an unresolvable rate — the {@link ProjectionContext.FxLookup} contract, and the
+     * same lambda {@link ValuationService} and {@link AllocationService} build. */
+    private ProjectionContext.FxLookup tradeDateFx(CurrencyCode target) {
+<span class="fc" id="L233">        return (from, on) -&gt; fxConversion.rate(from, target, on).orElse(BigDecimal.ONE);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

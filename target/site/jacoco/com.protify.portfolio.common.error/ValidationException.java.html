@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValidationException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.common.error</a> &gt; <span class="el_source">ValidationException.java</span></div><h1>ValidationException.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.common.error;
+
+import org.springframework.http.HttpStatus;
+
+/**
+ * A domain-level 400 — a cross-field or business rule that Bean Validation on the DTO cannot
+ * express (e.g. {@code from &gt; to} on a date range). Framework-level Bean Validation failures
+ * are a separate {@code MethodArgumentNotValidException} handler in Dev C's
+ * {@code GlobalExceptionHandler}; this class is only for rules the service layer checks itself.
+ * Defaults to the generic {@code /errors/validation-failed} slug; pass an explicit one
+ * (e.g. {@code &quot;invalid-date-range&quot;}) when a more specific slug exists in API_CONTRACT.md §0.7.
+ */
+public final class ValidationException extends DomainException {
+
+    private static final String DEFAULT_SLUG = &quot;validation-failed&quot;;
+
+    private final String slug;
+
+    public ValidationException(String message) {
+<span class="fc" id="L20">        this(DEFAULT_SLUG, message);</span>
+<span class="fc" id="L21">    }</span>
+
+    public ValidationException(String slug, String message) {
+<span class="fc" id="L24">        super(message);</span>
+<span class="fc" id="L25">        this.slug = slug;</span>
+<span class="fc" id="L26">    }</span>
+
+    @Override
+    public String problemType() {
+<span class="fc" id="L30">        return &quot;/errors/&quot; + slug;</span>
+    }
+
+    @Override
+    public HttpStatus status() {
+<span class="fc" id="L35">        return HttpStatus.BAD_REQUEST;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

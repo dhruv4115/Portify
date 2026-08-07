@@ -1,0 +1,216 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AllocationService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">AllocationService.java</span></div><h1>AllocationService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.instrument.Instrument;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.transaction.Txn;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.valuation.spi.FxConversion;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Currency;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import org.springframework.stereotype.Service;
+
+/**
+ * day-4-dev-A.md D4-A4 — {@code portfolios/{id}/allocation} (API_CONTRACT.md §13). Breaks the
+ * portfolio down by asset type, sector, currency or instrument, all in the requested currency,
+ * over the same {@link ValuationFolder} projection and the same {@link PositionPricer} that
+ * {@link ValuationService} uses. Sharing both is the point: an allocation whose slices summed to
+ * something other than the portfolio's own market value would be a bug visible in neither class
+ * on its own.
+ *
+ * &lt;p&gt;&lt;b&gt;Cash is excluded from the slices&lt;/b&gt; and reported separately — it has no asset type,
+ * sector or issuer, so a &quot;cash&quot; wedge would distort every other weight while answering nothing.
+ *
+ * &lt;p&gt;&lt;b&gt;Weights sum to exactly 100.&lt;/b&gt; Rounding four-decimal percentages independently leaves a
+ * residual of a few ten-thousandths; it is added to the largest slice, where it is
+ * proportionally smallest and least visible, rather than left to make the total read 99.9999.
+ */
+// Explicit bean name: api/allocation/AllocationService (merged from feature2/vaishnavi-d4)
+// takes the default &quot;allocationService&quot;, and two @Service classes with the same simple name
+// break component scanning outright. See this class's javadoc for which one should survive.
+@Service(&quot;valuationAllocationService&quot;)
+public class AllocationService {
+
+<span class="fc" id="L44">    private static final BigDecimal ONE_HUNDRED = new BigDecimal(&quot;100&quot;);</span>
+    private static final String UNCLASSIFIED = &quot;UNCLASSIFIED&quot;;
+
+    private final PortfolioService portfolioService;
+    private final TransactionRepository transactionRepository;
+    private final PositionPricer positionPricer;
+    private final FxConversion fxConversion;
+
+    public AllocationService(
+            PortfolioService portfolioService,
+            TransactionRepository transactionRepository,
+            PositionPricer positionPricer,
+<span class="fc" id="L56">            FxConversion fxConversion) {</span>
+<span class="fc" id="L57">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L58">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L59">        this.positionPricer = positionPricer;</span>
+<span class="fc" id="L60">        this.fxConversion = fxConversion;</span>
+<span class="fc" id="L61">    }</span>
+
+    public AllocationResult allocate(long userId, long portfolioId, AllocateBy by, LocalDate asOf,
+            CurrencyCode requestedCurrency) {
+        // getOrThrow, not findById: another user's portfolio must 404, never 403 (§4.7).
+<span class="fc" id="L66">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">        CurrencyCode currency = requestedCurrency != null ? requestedCurrency : portfolio.baseCurrency();</span>
+
+<span class="fc" id="L69">        List&lt;Txn&gt; upToAsOf = transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId).stream()</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">                .filter(txn -&gt; !ValuationFolder.dateOf(txn).isAfter(asOf))</span>
+<span class="fc" id="L71">                .toList();</span>
+<span class="fc" id="L72">        ValuationFolder.Snapshot snapshot = ValuationFolder.fold(upToAsOf, tradeDateFxLookup(currency));</span>
+
+<span class="fc" id="L74">        Map&lt;String, Bucket&gt; buckets = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L75">        BigDecimal total = BigDecimal.ZERO;</span>
+<span class="fc" id="L76">        LocalDate priceAsOf = null;</span>
+<span class="fc" id="L77">        LocalDate rateAsOf = null;</span>
+<span class="fc" id="L78">        boolean stale = false;</span>
+
+<span class="fc" id="L80">        Map&lt;Long, BigDecimal&gt; openQuantities = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        for (Map.Entry&lt;Long, ValuationFolder.InstrumentPosition&gt; entry : snapshot.positions().entrySet()) {</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">            if (entry.getValue().quantity().signum() &gt; 0) {</span>
+<span class="fc" id="L83">                openQuantities.put(entry.getKey(), entry.getValue().quantity());</span>
+            }
+<span class="fc" id="L85">        }</span>
+        // One instrument query for the whole portfolio rather than one per slice (D5-A3).
+<span class="fc" id="L87">        Map&lt;Long, PositionPricer.Priced&gt; pricedByInstrument = positionPricer.priceAll(openQuantities, currency, asOf);</span>
+
+<span class="fc bfc" id="L89" title="All 2 branches covered.">        for (Long instrumentId : openQuantities.keySet()) {</span>
+<span class="fc" id="L90">            PositionPricer.Priced value = pricedByInstrument.get(instrumentId);</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">            if (value == null) {</span>
+                // One unpriceable holding degrades the result; it never blanks it (§4.3).
+<span class="fc" id="L93">                stale = true;</span>
+<span class="fc" id="L94">                continue;</span>
+            }
+<span class="fc" id="L96">            Instrument instrument = value.instrument();</span>
+
+<span class="fc" id="L98">            buckets.computeIfAbsent(keyOf(by, instrument), key -&gt; new Bucket(labelOf(by, instrument)))</span>
+<span class="fc" id="L99">                    .add(value.marketValue());</span>
+<span class="fc" id="L100">            total = total.add(value.marketValue());</span>
+
+<span class="pc bpc" id="L102" title="2 of 4 branches missed.">            if (!value.priceAsOf().equals(asOf) || !value.rateAsOf().equals(asOf)) {</span>
+<span class="nc" id="L103">                stale = true;</span>
+            }
+<span class="fc" id="L105">            priceAsOf = earlierOf(priceAsOf, value.priceAsOf());</span>
+<span class="fc" id="L106">            rateAsOf = earlierOf(rateAsOf, value.rateAsOf());</span>
+<span class="fc" id="L107">        }</span>
+
+<span class="fc" id="L109">        BigDecimal roundedTotal = MoneyUtils.money(total);</span>
+<span class="fc" id="L110">        return new AllocationResult(portfolioId, by, currency, asOf, roundedTotal,</span>
+<span class="fc" id="L111">                snapshot.cashBalance(), toSlices(buckets, roundedTotal), priceAsOf, rateAsOf, stale);</span>
+    }
+
+    /**
+     * Weights, largest slice first, summing to exactly 100.
+     *
+     * &lt;p&gt;An empty portfolio returns no slices rather than dividing by zero — the guard is on
+     * {@code total} being zero, not on the map being empty, because a portfolio whose every
+     * holding priced at zero reaches here with buckets present and no total to apportion.
+     */
+    private List&lt;AllocationSlice&gt; toSlices(Map&lt;String, Bucket&gt; buckets, BigDecimal total) {
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (buckets.isEmpty()) {</span>
+<span class="fc" id="L123">            return List.of();</span>
+        }
+
+<span class="fc" id="L126">        List&lt;Map.Entry&lt;String, Bucket&gt;&gt; ordered = new ArrayList&lt;&gt;(buckets.entrySet());</span>
+<span class="fc" id="L127">        ordered.sort(Comparator.&lt;Map.Entry&lt;String, Bucket&gt;, BigDecimal&gt;comparing(e -&gt; e.getValue().value)</span>
+<span class="fc" id="L128">                .reversed()</span>
+<span class="fc" id="L129">                .thenComparing(Map.Entry::getKey));</span>
+
+<span class="pc bpc" id="L131" title="1 of 2 branches missed.">        boolean apportionable = total.signum() &gt; 0;</span>
+<span class="fc" id="L132">        List&lt;AllocationSlice&gt; slices = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L133">        BigDecimal weightSum = BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L134" title="All 2 branches covered.">        for (Map.Entry&lt;String, Bucket&gt; entry : ordered) {</span>
+<span class="fc" id="L135">            Bucket bucket = entry.getValue();</span>
+<span class="pc bpc" id="L136" title="1 of 2 branches missed.">            BigDecimal weight = apportionable</span>
+<span class="fc" id="L137">                    ? MoneyUtils.money(bucket.value.multiply(ONE_HUNDRED).divide(total, MoneyUtils.MONEY_SCALE + 4, MoneyUtils.ROUNDING))</span>
+<span class="pc" id="L138">                    : MoneyUtils.money(BigDecimal.ZERO);</span>
+<span class="fc" id="L139">            weightSum = weightSum.add(weight);</span>
+<span class="fc" id="L140">            slices.add(new AllocationSlice(entry.getKey(), bucket.label,</span>
+<span class="fc" id="L141">                    MoneyUtils.money(bucket.value), weight, bucket.instrumentCount));</span>
+<span class="fc" id="L142">        }</span>
+
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">        if (apportionable) {</span>
+            // ordered is largest-first, so slot 0 is the largest slice.
+<span class="fc" id="L146">            BigDecimal residual = MoneyUtils.money(ONE_HUNDRED).subtract(weightSum);</span>
+<span class="fc" id="L147">            AllocationSlice largest = slices.get(0);</span>
+<span class="fc" id="L148">            slices.set(0, new AllocationSlice(largest.key(), largest.label(), largest.value(),</span>
+<span class="fc" id="L149">                    largest.weightPct().add(residual), largest.instrumentCount()));</span>
+        }
+<span class="fc" id="L151">        return List.copyOf(slices);</span>
+    }
+
+    private static String keyOf(AllocateBy by, Instrument instrument) {
+<span class="fc bfc" id="L155" title="All 4 branches covered.">        return switch (by) {</span>
+<span class="fc" id="L156">            case ASSET_TYPE -&gt; instrument.assetType().name();</span>
+<span class="pc bpc" id="L157" title="1 of 4 branches missed.">            case SECTOR -&gt; instrument.sector() == null || instrument.sector().isBlank()</span>
+<span class="fc" id="L158">                    ? UNCLASSIFIED : instrument.sector();</span>
+<span class="fc" id="L159">            case CURRENCY -&gt; instrument.currency().name();</span>
+<span class="fc" id="L160">            case INSTRUMENT -&gt; instrument.symbol();</span>
+        };
+    }
+
+    private static String labelOf(AllocateBy by, Instrument instrument) {
+<span class="fc bfc" id="L165" title="All 4 branches covered.">        return switch (by) {</span>
+<span class="fc" id="L166">            case ASSET_TYPE -&gt; titleCase(instrument.assetType().name());</span>
+<span class="pc bpc" id="L167" title="1 of 4 branches missed.">            case SECTOR -&gt; instrument.sector() == null || instrument.sector().isBlank()</span>
+<span class="fc" id="L168">                    ? &quot;Unclassified&quot; : instrument.sector();</span>
+            // From the JDK's own currency table rather than a hard-coded map here — one fewer
+            // thing to keep in step with CurrencyCode.
+<span class="fc" id="L171">            case CURRENCY -&gt; Currency.getInstance(instrument.currency().name()).getDisplayName(Locale.ENGLISH);</span>
+<span class="fc" id="L172">            case INSTRUMENT -&gt; instrument.name();</span>
+        };
+    }
+
+    /** {@code MUTUAL_FUND} to {@code Mutual Fund} — enum names are not display text. */
+    private static String titleCase(String enumName) {
+<span class="fc" id="L178">        String[] words = enumName.split(&quot;_&quot;);</span>
+<span class="fc" id="L179">        StringBuilder out = new StringBuilder();</span>
+<span class="fc bfc" id="L180" title="All 2 branches covered.">        for (String word : words) {</span>
+<span class="pc bpc" id="L181" title="1 of 2 branches missed.">            if (!out.isEmpty()) {</span>
+<span class="nc" id="L182">                out.append(' ');</span>
+            }
+<span class="fc" id="L184">            out.append(word.charAt(0)).append(word.substring(1).toLowerCase(Locale.ENGLISH));</span>
+        }
+<span class="fc" id="L186">        return out.toString();</span>
+    }
+
+    private ProjectionContext.FxLookup tradeDateFxLookup(CurrencyCode target) {
+<span class="fc" id="L190">        return (from, on) -&gt; fxConversion.rate(from, target, on).orElse(BigDecimal.ONE);</span>
+    }
+
+    private static LocalDate earlierOf(LocalDate a, LocalDate b) {
+<span class="fc bfc" id="L194" title="All 2 branches covered.">        if (a == null) {</span>
+<span class="fc" id="L195">            return b;</span>
+        }
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">        return a.isBefore(b) ? a : b;</span>
+    }
+
+    /** A running total plus the number of distinct instruments that landed in it. */
+    private static final class Bucket {
+        private final String label;
+<span class="fc" id="L203">        private BigDecimal value = BigDecimal.ZERO;</span>
+        private int instrumentCount;
+
+<span class="fc" id="L206">        private Bucket(String label) {</span>
+<span class="fc" id="L207">            this.label = label;</span>
+<span class="fc" id="L208">        }</span>
+
+        private void add(BigDecimal marketValue) {
+<span class="fc" id="L211">            value = value.add(marketValue);</span>
+<span class="fc" id="L212">            instrumentCount++;</span>
+<span class="fc" id="L213">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

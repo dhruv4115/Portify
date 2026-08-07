@@ -126,6 +126,7 @@ Current user; created on first sign-in.
 | `displayName` | string \| null | `name` claim |
 | `pictureUrl` | string \| null | `picture` claim |
 | `createdAt` | instant | when the row was provisioned |
+| `preferences` | object | §1.1; every field nullable. Always present, never `null` itself |
 
 ```bash
 curl -s http://localhost:8080/api/v1/me -H "Authorization: Bearer $TOKEN"
@@ -136,11 +137,121 @@ curl -s http://localhost:8080/api/v1/me -H "Authorization: Bearer $TOKEN"
   "email": "dhruv@example.com",
   "displayName": "Dhruv Tiwari",
   "pictureUrl": "https://lh3.googleusercontent.com/a/ACg8oc...",
-  "createdAt": "2026-07-31T08:02:11Z"
+  "createdAt": "2026-07-31T08:02:11Z",
+  "preferences": { "theme": "dark", "language": "hi", "density": null, "motion": null }
 }
 ```
 
+`preferences` rides along here rather than needing its own call during boot: a second round
+trip before first paint is exactly what makes the page flash the wrong theme.
+
 Codes: `200`, `401`, `403` (email not verified).
+
+---
+
+## 1.1 `GET /me/preferences` · `PATCH /me/preferences`
+
+Display preferences that follow the account instead of the device. Optional to use — a client
+that stores these locally and never calls this is still a correct client.
+
+| Field | Type | Values |
+|---|---|---|
+| `theme` | string \| null | `light` `dark` `system` |
+| `language` | string \| null | BCP-47 primary subtag, e.g. `en`, `hi`, `pt-BR` |
+| `density` | string \| null | `comfortable` `compact` |
+| `motion` | string \| null | `full` `reduced` |
+
+**`null` means "no server-side preference — keep whatever this device already uses"**, which is
+not the same as "the default". A client must not overwrite a local choice on a `null`.
+
+These are lowercase tokens rather than the uppercase enums used everywhere else in this API
+(§0.3, `TransactionType`, …). That is deliberate: they are written verbatim onto
+`<html data-theme="…">` and matched by CSS attribute selectors, so the client's stylesheet owns
+the vocabulary.
+
+`PATCH` is partial — an omitted field keeps its stored value. There is no way to clear a field
+back to unset, and none is needed: `system`/`comfortable`/`full` are themselves the defaults, so
+a reset is an ordinary update. An empty body `{}` is `400`, not a silent no-op (same rule as §5).
+
+```bash
+curl -s -X PATCH http://localhost:8080/api/v1/me/preferences \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"theme":"dark"}'
+```
+```json
+{ "theme": "dark", "language": "hi", "density": null, "motion": null }
+```
+
+The response is the row **after** the write, not an echo of the request — `language` above was
+already stored and is preserved by a PATCH that never mentioned it.
+
+Codes: `200`, `400`, `401`.
+
+---
+
+## 1.2 `GET /overview`
+
+Everything the user owns, in one call, for the landing page.
+
+| Query param | Type | Default |
+|---|---|---|
+| `currency` | enum | the base currency most of this user's portfolios already use |
+
+**Why this is a server endpoint at all.** Adding rupees to dollars requires a rate for a date.
+The browser has none and cannot get one, so a client-side "net worth" would have to invent it.
+The server already resolves rates through the same dated FX chain every other money figure goes
+through, so the same total here is real.
+
+**Both totals are reported and neither replaces the other.** `byCurrency` is arithmetic with no
+FX in it and is unconditionally true; the top-level totals are that converted into one currency
+and are only as true as the rate. A reader gets to choose which to believe.
+
+| Field | Type | Notes |
+|---|---|---|
+| `displayCurrency` | enum | what the top-level totals are expressed in |
+| `portfolioCount` / `holdingCount` | integer | across the whole account |
+| `marketValue` `costBasis` `cashBalance` `totalValue` `unrealisedPnl` `realisedPnl` | Money | in `displayCurrency` |
+| `unrealisedPnlPct` | string \| null | `null` when cost basis is zero (§4.2) — never `Infinity` |
+| `byCurrency[]` | object | per base currency, **no FX applied**; same money fields plus `portfolioCount` |
+| `convertedPortfolioCount` | integer | how many of `portfolioCount` are inside the totals |
+| `unconvertedCurrencies` | enum[] | base currencies with no resolvable rate today |
+| `asOf` | date | |
+| `dataQuality` | object | §0.5 |
+
+```bash
+curl -s "http://localhost:8080/api/v1/overview?currency=INR" -H "Authorization: Bearer $TOKEN"
+```
+```json
+{
+  "displayCurrency": "INR",
+  "portfolioCount": 2, "holdingCount": 9,
+  "totalValue":   { "amount": "17000.0000", "currency": "INR" },
+  "unrealisedPnl": { "amount": "2000.0000", "currency": "INR" },
+  "unrealisedPnlPct": "13.3333",
+  "byCurrency": [
+    { "currency": "INR", "portfolioCount": 1, "totalValue": { "amount": "1000.0000", "currency": "INR" } },
+    { "currency": "USD", "portfolioCount": 1, "totalValue": { "amount": "200.0000",  "currency": "USD" } }
+  ],
+  "convertedPortfolioCount": 2,
+  "unconvertedCurrencies": [],
+  "asOf": "2026-07-30",
+  "dataQuality": { "priceAsOf": "2026-07-30", "rateAsOf": "2026-07-30", "stale": false }
+}
+```
+
+**A currency with no rate is named, never silently dropped.** It is excluded from the top-level
+totals, listed in `unconvertedCurrencies`, and still reported in full in `byCurrency`;
+`convertedPortfolioCount` then differs from `portfolioCount`, which is how a client knows the
+headline covers part of the account. A total that quietly omits a portfolio is worse than one
+that says what it left out.
+
+Each portfolio is valued in its own base currency first and the per-currency **subtotal** is
+converted once — conversion is linear, so the answer matches converting each portfolio, but it
+rounds once per currency rather than once per portfolio.
+
+Never 404s: an account with no portfolios is `200` with zeroes and an empty `byCurrency`.
+
+Codes: `200`, `400` (unknown `currency`), `401`.
 
 ---
 
@@ -313,8 +424,20 @@ Paged, filterable.
 |---|---|---|---|
 | `type` | enum | all | `BUY` `SELL` `DIVIDEND` `DEPOSIT` `WITHDRAWAL` `FEE` |
 | `symbol` | string | all | exact match |
+| `q` | string | all | free text over symbol, instrument name and note; ≤ 500 chars |
 | `from` / `to` | date | all | `from ≤ to`, else 400 |
 | `page` / `size` / `sort` | | `0` / `20` / `executedAt,desc` | `size ≤ 100` |
+
+`q` is case-insensitive and matches a substring of the instrument symbol, the instrument name or
+the note — the three things visible on a rendered row. `%` and `_` in the term are matched
+literally, so searching `50%` finds the note containing it rather than every row in the
+portfolio.
+
+**Filter server-side, not in the client.** Every filter above composes (they narrow together,
+never widen) and applies across the whole ledger. Filtering an already-loaded page in the
+browser can only see what has been paged in, so a search for a symbol bought two years ago
+returns nothing until the reader has paged back that far — the empty result looks identical to
+a genuine one.
 
 **`TransactionResponse`**
 
@@ -473,6 +596,88 @@ curl -s -X POST http://localhost:8080/api/v1/portfolios/7/transactions \
 ```
 
 Codes: `201`, `400`, `401`, `404`, `422`.
+
+---
+
+## 8.1 `POST /portfolios/{id}/transactions/import` — **bulk add from a CSV file**
+
+`multipart/form-data`, one part named `file`. Query parameter `dryRun` (default `false`)
+validates the whole file and rolls back, writing nothing.
+
+**There is no holdings import, and there will not be one.** Holdings are a projection of the
+ledger, not an independent fact — a holdings file would assert a quantity, average cost and
+realised P&L that no transaction explains, which is the first figure in this system that could
+not be rebuilt from the `txn` table. Importing the transactions recomputes the holdings from
+them, which is why this endpoint needs no separate "refresh holdings" step.
+
+### Columns
+
+Header row required. Matching is case- and punctuation-insensitive against a small alias set,
+and column order is free. Unrecognised columns are ignored, so a file produced by the app's own
+CSV export re-imports unedited.
+
+| Column | Aliases | Required | Notes |
+|---|---|---|---|
+| `Date` | `executedAt`, `executed_at`, `Trade Date` | yes | `YYYY-MM-DD` (read as midnight UTC) or an ISO-8601 timestamp. A bare date that is still ahead of the clock — today, east of UTC — collapses to now rather than failing `@PastOrPresent`. |
+| `Type` | `txnType`, `Transaction Type` | yes | `BUY`/`SELL`/`DIVIDEND`/`DEPOSIT`/`WITHDRAWAL`/`FEE`, any case. |
+| `Symbol` | `Ticker`, `Instrument` | for `BUY`/`SELL`/`DIVIDEND`/`FEE` | Must already exist in `instrument`; import never creates one. |
+| `Quantity` | `Qty`, `Units`, `Shares` | for `BUY`/`SELL`/`DIVIDEND` | Blank means zero. Max 13 integer digits, 6 decimals. |
+| `Price` | `Amount`, `Unit Price` | yes | The whole cash amount for `DEPOSIT`/`WITHDRAWAL`/`FEE`/`DIVIDEND` (§8). Max 15 integer digits, 4 decimals. |
+| `Currency` | `CCY` | yes | Must be the instrument's own trading currency. |
+| `Fees` | `Fee`, `Commission`, `Charges` | no | Blank means zero. |
+| `Note` | `Notes`, `Memo`, `Description` | no | Max 500 characters. |
+
+Numbers must be plain decimals — no thousands separators and no currency symbols. `1,450.25`
+and `1.450,25` are the same string to different halves of the world, and a parser that guesses
+between them will eventually book a trade a thousand times too large.
+
+Limits: 2,000 rows, 2 MB.
+
+### Response — **200 even when nothing was imported**
+
+The import is **all-or-nothing**: every row is applied inside one database transaction against
+one fold of the existing history plus the whole batch, so a file that fails anywhere writes
+nothing. (Folding the batch as one history is also what makes a file whose `BUY` on line 4
+covers its `SELL` on line 9 valid — applied row by row it would be rejected.)
+
+A file whose *rows* are wrong is a `200` carrying the reasons, not a 4xx: a `ProblemDetail`
+cannot say "lines 3 and 9, for these two different reasons", and that list is the only thing a
+person can act on. `imported > 0` is the only thing that means anything was written.
+
+```bash
+curl -s -X POST "http://localhost:8080/api/v1/portfolios/7/transactions/import?dryRun=true" \
+  -H "Authorization: Bearer $TOKEN" -F "file=@ledger.csv"
+```
+```json
+{
+  "dryRun": true,
+  "totalRows": 40,
+  "imported": 40,
+  "failed": 0,
+  "errors": [],
+  "warnings": ["These transactions leave the portfolio's cash balance negative."]
+}
+```
+
+A rejected file, with `line` counting physical lines in the uploaded file, header included —
+the number the user's spreadsheet shows:
+
+```json
+{
+  "dryRun": false, "totalRows": 40, "imported": 0, "failed": 2,
+  "errors": [
+    { "line": 4, "message": "type must be one of BUY, SELL, DIVIDEND, DEPOSIT, WITHDRAWAL, FEE, but was \"PURCHASE\"." },
+    { "line": 17, "message": "Cannot sell 40 of AAPL; holding is 6." }
+  ],
+  "warnings": []
+}
+```
+
+A file that is unusable *as a file* is still a 4xx with the usual `ProblemDetail`, because there
+is no per-row story to tell: empty, no recognisable header columns, over the row or size cap
+(`400`, `errors[0].field = "file"`), or a portfolio that is not yours (`404`).
+
+Codes: `200`, `400`, `401`, `404`, `413`.
 
 ---
 
@@ -659,10 +864,11 @@ Codes: `200`, `400` (`from > to`, range too wide), `401`, `404`.
 
 ## 13. `GET /portfolios/{id}/allocation`
 
-| Query param | Type | Default |
-|---|---|---|
-| `by` | enum | `ASSET_TYPE`. Also `SECTOR`, `CURRENCY`, `INSTRUMENT` |
-| `currency` | enum | portfolio base |
+| Query param | Type | Default | Constraints |
+|---|---|---|---|
+| `by` | enum | `ASSET_TYPE`. Also `SECTOR`, `CURRENCY`, `INSTRUMENT` | |
+| `currency` | enum | portfolio base | |
+| `limit` | int | *(absent — every slice)* | 2–50 |
 
 ```bash
 curl -s "http://localhost:8080/api/v1/portfolios/7/allocation?by=CURRENCY" \
@@ -683,6 +889,37 @@ curl -s "http://localhost:8080/api/v1/portfolios/7/allocation?by=CURRENCY" \
 
 `weightPct` values sum to 100 ± 0.01; residual rounding lands on the largest slice.
 Cash is excluded from allocation and reported separately.
+
+**Slices come back largest first.** A pie's wedges and its legend both mean "biggest to
+smallest", and `limit` below could not mean "the top ones" against any other order.
+
+### `limit` — the top N−1 and an `OTHER`
+
+With `limit`, the smallest slices are folded into a single slice keyed `OTHER` (label `"Other"`),
+so exactly `limit` slices come back. `instrumentCount` on it is how many were folded.
+
+```bash
+curl -s "http://localhost:8080/api/v1/portfolios/7/allocation?by=INSTRUMENT&limit=8" \
+  -H "Authorization: Bearer $TOKEN"
+```
+```json
+{ "key": "OTHER", "label": "Other",
+  "value": { "amount": "18420.0000", "currency": "INR" },
+  "weightPct": "4.4600", "instrumentCount": 12 }
+```
+
+**The fold is server-side because it is a sum of money.** Every amount on the wire is a decimal
+string precisely so a client never adds them as IEEE-754 doubles (§0.2); a client building its
+own "other" bucket would be doing exactly that, and the figure would drift from the total beside
+it. Weights are summed from the already-corrected percentages rather than recomputed, so the
+residual survives the fold and the slices still total exactly 100.
+
+**Folding one slice is not folding.** `limit` is honoured only when there is genuinely a tail —
+`limit=8` against 8 slices returns those 8 named, not 7 and an "Other" of one.
+
+Omit `limit` and the response is every slice, exactly as before. The client uses it to cap the
+pie at its palette size: past 8 wedges a categorical palette has no distinct colours left, and
+reusing them draws two different categories identically.
 
 Codes: `200`, `400`, `401`, `404`.
 
@@ -799,9 +1036,23 @@ cached data existed).
 Behind `features.insights.enabled`. When disabled they return `501 Not Implemented` with a
 clean `ProblemDetail` — never a 404, so the frontend can tell "turned off" from "wrong URL".
 
-### `POST /portfolios/{id}/insights`
+### `GET /portfolios/{id}/insights` · `POST /portfolios/{id}/insights`
+
+Both verbs, one behaviour. `GET` takes no body and uses the defaults (`1M`, `concise`); `POST`
+carries `horizon`/`tone`. It is a read that happens to be parameterised and stores nothing, so
+both are honest descriptions of it — a `POST` with no body behaves exactly like a `GET`.
+
+| Body field | Type | Default | Values |
+|---|---|---|---|
+| `horizon` | string | `1M` | `1D` `1W` `1M` `3M` `6M` `1Y` `YTD` `ALL` |
+| `tone` | string | `concise` | `concise` `detailed` `plain` |
+
+Both are allowlisted rather than free text because they are interpolated into an LLM prompt
+downstream; an unconstrained string there is a prompt-injection surface. Anything else is `400`.
 
 ```bash
+curl -s http://localhost:8080/api/v1/portfolios/7/insights -H "Authorization: Bearer $TOKEN"
+
 curl -s -X POST http://localhost:8080/api/v1/portfolios/7/insights \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"horizon":"1M","tone":"concise"}'
@@ -810,18 +1061,58 @@ curl -s -X POST http://localhost:8080/api/v1/portfolios/7/insights \
 {
   "portfolioId": 7,
   "generatedAt": "2026-07-30T09:40:12Z",
-  "engine": "LLM",
+  "engine": "AI_GENERATED",
   "summary": "Your portfolio is up 10.2% against cost, driven mainly by AAPL (+6.4%) and Shell (+8.6%). Currency is doing real work here: 90% of the book is priced outside your INR base, so a 1% move in USD/INR shifts your total by roughly ₹2,400 before any stock moves.",
   "highlights": [
     { "type": "CONCENTRATION", "severity": "MEDIUM", "message": "AAPL is 57.7% of market value." },
     { "type": "FX_EXPOSURE",   "severity": "MEDIUM", "message": "90.2% of holdings are non-INR." }
   ],
-  "disclaimer": "Generated commentary. Not investment advice."
+  "disclaimer": "Generated commentary. Not investment advice.",
+  "variants": [
+    {
+      "engine": "AI_GENERATED",
+      "summary": "Your portfolio is up 10.2% against cost, driven mainly by AAPL (+6.4%)…",
+      "highlights": [ … ]
+    },
+    {
+      "engine": "RULE_BASED",
+      "summary": "AAPL is 57.7% of market value. 90.2% of holdings are non-INR.",
+      "highlights": [ … ]
+    }
+  ]
 }
 ```
 
-`engine` is `LLM` when the FastAPI service answered and **`RULE_BASED`** when it did not —
-the fallback is visible, not hidden. Codes: `200`, `400`, `401`, `404`, `501`.
+`engine` is **`AI_GENERATED`** when the FastAPI service answered and **`RULE_BASED`** when it did
+not — the fallback is visible, not hidden, and the badge in the UI switches on exactly this
+value. The wire value is `AI_GENERATED` while the internal enum is `Engine.LLM`: "LLM" names an
+implementation, which is the right word inside the service and the wrong one on a product
+surface that may later be served by something that is not one.
+
+#### `variants` — both readings, one request
+
+`variants` carries every reading that was produced, most-preferred first, so a client can offer
+the AI and deterministic summaries side by side. `engine`/`summary`/`highlights` mirror
+`variants[0]` — the one to show by default — so **a client that ignores `variants` entirely
+still behaves exactly as before**; the array is purely additive.
+
+Two rules govern it:
+
+- **Both readings come from one snapshot.** The rule-based summary is generated in-process from
+  the same aggregate that was sent to the model. Fetching them in two requests would let a price
+  refresh land in between, and a reader comparing the two would attribute that difference to the
+  engines — the one thing the comparison exists to rule out.
+- **Two variants only when there are genuinely two.** When the LLM path was off, timed out or
+  failed, the rule-based summary *is* the answer and the array holds it alone. Padding it to two
+  would offer a choice between a sentence and itself — and not even reliably: the FastAPI
+  service's generator has more highlight types than the Java fallback, so pairing them could
+  show two *different* rule-based readings both labelled the same thing.
+
+Only **aggregates** ever leave this server — the payload sent onward has no field for a
+transaction id, a trade date or a note, so per-transaction data cannot reach an external model
+even by mistake.
+
+Codes: `200`, `400`, `401`, `404`, `501`.
 
 ### `POST /portfolios/{id}/query`
 
@@ -844,6 +1135,47 @@ curl -s -X POST http://localhost:8080/api/v1/portfolios/7/query \
 The LLM never generates SQL and never touches the database. It emits a filter object that is
 validated against the same Bean Validation constraints as §7 before use. Codes: `200`,
 `400`, `401`, `404`, `501`.
+
+### `POST /i18n/translate`
+
+On-demand UI translation, behind `features.translation.enabled` **and** a configured API key —
+without a key there is nothing to call, so the endpoint reports `501` rather than answering
+`200` with English every time.
+
+**This is not how the bundled languages work.** Those are static catalogue files: free, instant,
+reviewable and correct offline. This endpoint exists only for a language nobody has written a
+catalogue for yet. A client should reach for it only after the bundled registry has no entry for
+what the user asked for; routing the shipped languages through here would make a solved problem
+cost money and a round trip.
+
+| Body field | Type | Constraints |
+|---|---|---|
+| `targetLanguage` | string | BCP-47 tag, required |
+| `entries` | object | catalogue key → English source; 1–600 entries, each ≤ 1000 chars |
+
+Keyed rather than a positional array because the response is merged back by key — order is
+exactly the kind of guarantee that quietly breaks across batching and partial failure.
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/i18n/translate \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"targetLanguage":"ko","entries":{"nav.overview":"Overview","nav.settings":"Settings"}}'
+```
+```json
+{
+  "targetLanguage": "ko",
+  "engine": "AI_GENERATED",
+  "entries": { "nav.overview": "개요", "nav.settings": "Settings" },
+  "untranslatedKeys": ["nav.settings"]
+}
+```
+
+**`entries` always contains every key that was asked for.** A key that could not be translated
+holds its English source and is listed in `untranslatedKeys` — the same contract the bundled
+catalogues already have, so a failure degrades a page's language rather than breaking its
+layout. `engine` is `PASSTHROUGH` when nothing was translated at all.
+
+Codes: `200`, `400`, `401`, `501`.
 
 ### `GET /portfolios/{id}/optimize`
 
@@ -1083,3 +1415,11 @@ failure is traceable across both APIs.
 | Day 0 | Drafted from REFERENCE_DESIGN §4 |
 | Day 0 | **Added** `PATCH /portfolios/{id}`, `GET /fx/rates`; **added** `?currency=` override, `dataQuality`, `warnings[]`, `totalBase`/`fxRateApplied`; **removed** `/optimize` |
 | Day 2 | *(to be filled)* frozen against shipped code — `D2-C4` |
+| Day 6 | **Added** §1.2 `GET /overview` — account-level aggregation with an FX-converted grand total beside FX-free per-currency subtotals. The client cannot do this without inventing a rate. |
+| Day 6 | **Added** §7 `?q=` free-text transaction filter (symbol, instrument name, note). Filtering in the client can only see loaded pages, so "no match" was not trustworthy. |
+| Day 6 | **Added** §1.1 `GET`/`PATCH /me/preferences` and a `preferences` object on §1 `GET /me`. Nullable throughout: `null` means "no server-side preference", not "the default". |
+| Day 6 | **Added** §18 `POST /i18n/translate` for languages with no bundled catalogue. Untranslated keys fall back to English rather than failing. |
+| Day 6 | **Added** §13 `?limit=` — folds the smallest slices into one `OTHER`, summed on the server because a client folding money strings would be adding doubles. Slices are now ordered largest-first, which they were not (the map was in holdings order, so "top N" had no meaning). The client caps the pie at 8, its palette size: past that a categorical palette has no distinct colours left, and the previous `index % 8` drew two different categories identically. |
+| Day 6 | **Added** §18 insights `variants[]` — both the AI and rule-based readings in one response, generated from a single snapshot so they are comparable, so a client can toggle between them. Purely additive: `engine`/`summary`/`highlights` still mirror the default reading. Present with two entries only when the LLM path actually answered. |
+| Day 6 | **Added** §8.1 `POST /portfolios/{id}/transactions/import` — bulk add from CSV, the counterpart to the client-side export. All-or-nothing, folded as one history so a batch can be internally consistent, and a `200` with per-row reasons rather than a 4xx, because a `ProblemDetail` cannot name the lines to fix. Deliberately no holdings import: holdings are a projection, and one stated independently of the ledger would be the first figure here that could not be rebuilt from it. |
+| Day 6 | **Changed** §18 insights: now answers **`GET` as well as `POST`** (the client reads it like any other panel), and `engine` is **`AI_GENERATED`** on the wire, not `LLM`. Agreed rather than shipped silently — the previously documented `LLM` did not match the value the UI's badge switches on, so a generated summary would have been labelled rule-based. `horizon`/`tone` are now an allowlist, since they reach a prompt. |

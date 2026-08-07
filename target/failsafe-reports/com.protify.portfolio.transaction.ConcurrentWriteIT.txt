@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.protify.portfolio.transaction.ConcurrentWriteIT
+-------------------------------------------------------------------------------
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 13.13 s -- in com.protify.portfolio.transaction.ConcurrentWriteIT

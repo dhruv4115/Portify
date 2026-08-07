@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CurrencyMismatchException.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.common.error</a> &gt; <span class="el_source">CurrencyMismatchException.java</span></div><h1>CurrencyMismatchException.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.common.error;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import org.springframework.http.HttpStatus;
+
+/**
+ * Thrown when a currency that must match does not — e.g. a transaction's {@code currency}
+ * against its instrument's native currency. Carries both sides so the message is specific.
+ */
+public final class CurrencyMismatchException extends DomainException {
+
+    private final CurrencyCode expected;
+    private final CurrencyCode actual;
+
+    public CurrencyMismatchException(CurrencyCode expected, CurrencyCode actual) {
+<span class="fc" id="L16">        super(&quot;Currency mismatch: expected %s but got %s.&quot;.formatted(expected, actual));</span>
+<span class="fc" id="L17">        this.expected = expected;</span>
+<span class="fc" id="L18">        this.actual = actual;</span>
+<span class="fc" id="L19">    }</span>
+
+    public CurrencyCode expected() {
+<span class="fc" id="L22">        return expected;</span>
+    }
+
+    public CurrencyCode actual() {
+<span class="fc" id="L26">        return actual;</span>
+    }
+
+    @Override
+    public String problemType() {
+<span class="fc" id="L31">        return &quot;/errors/currency-mismatch&quot;;</span>
+    }
+
+    @Override
+    public HttpStatus status() {
+<span class="fc" id="L36">        return HttpStatus.UNPROCESSABLE_ENTITY;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

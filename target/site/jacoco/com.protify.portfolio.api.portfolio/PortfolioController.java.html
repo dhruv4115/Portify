@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PortfolioController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.portfolio</a> &gt; <span class="el_source">PortfolioController.java</span></div><h1>PortfolioController.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.portfolio;
+
+import com.protify.portfolio.api.dto.CreatePortfolioRequest;
+import com.protify.portfolio.api.dto.PortfolioResponse;
+import com.protify.portfolio.api.dto.UpdatePortfolioRequest;
+import com.protify.portfolio.api.error.ConflictException;
+import com.protify.portfolio.api.mapper.PortfolioMapper;
+import com.protify.portfolio.api.user.CurrentUserResolver;
+import com.protify.portfolio.common.error.ValidationException;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import jakarta.validation.Valid;
+import java.net.URI;
+import java.util.List;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+/**
+ * Validates, delegates to {@link PortfolioService}, maps — no business logic here
+ * (day-2-dev-C.md D2-C2). Every method resolves {@code userId} from
+ * {@link CurrentUserResolver} first and passes it into every service call; no query ever runs
+ * without it. {@link PortfolioService#getOrThrow} (used by {@code get} and transitively by
+ * {@code delete}) already filters by {@code userId}, which is why another user's portfolio
+ * surfaces as {@link com.protify.portfolio.common.error.NotFoundException} — 404, never 403.
+ */
+@RestController
+@RequestMapping(&quot;/portfolios&quot;)
+public class PortfolioController {
+
+    private final PortfolioService portfolioService;
+    private final PortfolioMapper portfolioMapper;
+    private final PortfolioSummaryProvider summaryProvider;
+    private final CurrentUserResolver currentUserResolver;
+
+    public PortfolioController(
+            PortfolioService portfolioService,
+            PortfolioMapper portfolioMapper,
+            PortfolioSummaryProvider summaryProvider,
+<span class="fc" id="L50">            CurrentUserResolver currentUserResolver) {</span>
+<span class="fc" id="L51">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L52">        this.portfolioMapper = portfolioMapper;</span>
+<span class="fc" id="L53">        this.summaryProvider = summaryProvider;</span>
+<span class="fc" id="L54">        this.currentUserResolver = currentUserResolver;</span>
+<span class="fc" id="L55">    }</span>
+
+    /** Never 404 — an empty list is a normal answer, not an error. */
+    @GetMapping
+    public List&lt;PortfolioResponse&gt; list() {
+<span class="fc" id="L60">        long userId = currentUserResolver.resolve().id();</span>
+<span class="fc" id="L61">        return portfolioService.findAllByUser(userId).stream()</span>
+<span class="fc" id="L62">                .map(this::toResponse)</span>
+<span class="fc" id="L63">                .toList();</span>
+    }
+
+    @PostMapping
+    public ResponseEntity&lt;PortfolioResponse&gt; create(@Valid @RequestBody CreatePortfolioRequest request) {
+<span class="fc" id="L68">        long userId = currentUserResolver.resolve().id();</span>
+        Portfolio created;
+        try {
+<span class="fc" id="L71">            created = portfolioService.create(userId, request.name(), request.baseCurrency());</span>
+<span class="fc" id="L72">        } catch (DuplicateKeyException e) {</span>
+<span class="fc" id="L73">            throw new ConflictException(</span>
+                    &quot;/errors/duplicate-portfolio-name&quot;,
+<span class="fc" id="L75">                    &quot;A portfolio named '%s' already exists.&quot;.formatted(request.name()));</span>
+<span class="fc" id="L76">        }</span>
+
+<span class="fc" id="L78">        URI location = ServletUriComponentsBuilder.fromCurrentRequest()</span>
+<span class="fc" id="L79">                .path(&quot;/{id}&quot;)</span>
+<span class="fc" id="L80">                .buildAndExpand(created.id())</span>
+<span class="fc" id="L81">                .toUri();</span>
+<span class="fc" id="L82">        return ResponseEntity.created(location).body(toResponse(created));</span>
+    }
+
+    @GetMapping(&quot;/{id}&quot;)
+    public PortfolioResponse get(@PathVariable long id) {
+<span class="fc" id="L87">        long userId = currentUserResolver.resolve().id();</span>
+<span class="fc" id="L88">        Portfolio portfolio = portfolioService.getOrThrow(userId, id);</span>
+<span class="fc" id="L89">        return toResponse(portfolio);</span>
+    }
+
+    /**
+     * API_CONTRACT.md §5. {@code name} and {@code baseCurrency} are each optional, but at least
+     * one is required — that cross-field rule isn't expressible as a single Bean Validation
+     * annotation, so it's checked here rather than invented as a one-off constraint class for a
+     * single caller. Changing {@code baseCurrency} rewrites no {@code txn}/{@code holding} row
+     * ({@code PortfolioRepository#update}, {@code BaseCurrencyImmutabilityIT}) — only how
+     * totals are presented, resolved fresh on the next read through
+     * {@link ValuationBackedPortfolioSummaryProvider}.
+     */
+    @PatchMapping(&quot;/{id}&quot;)
+    public PortfolioResponse update(@PathVariable long id, @Valid @RequestBody UpdatePortfolioRequest request) {
+<span class="fc bfc" id="L103" title="All 4 branches covered.">        if (request.name() == null &amp;&amp; request.baseCurrency() == null) {</span>
+<span class="fc" id="L104">            throw new ValidationException(</span>
+                    &quot;portfolio-update-empty&quot;, &quot;At least one of name or baseCurrency must be provided.&quot;);
+        }
+
+<span class="fc" id="L108">        long userId = currentUserResolver.resolve().id();</span>
+        Portfolio updated;
+        try {
+<span class="fc" id="L111">            updated = portfolioService.update(userId, id, request.name(), request.baseCurrency());</span>
+<span class="fc" id="L112">        } catch (DuplicateKeyException e) {</span>
+<span class="fc" id="L113">            throw new ConflictException(</span>
+                    &quot;/errors/duplicate-portfolio-name&quot;,
+<span class="fc" id="L115">                    &quot;A portfolio named '%s' already exists.&quot;.formatted(request.name()));</span>
+<span class="fc" id="L116">        }</span>
+<span class="fc" id="L117">        return toResponse(updated);</span>
+    }
+
+    @DeleteMapping(&quot;/{id}&quot;)
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable long id) {
+<span class="fc" id="L123">        long userId = currentUserResolver.resolve().id();</span>
+<span class="fc" id="L124">        portfolioService.delete(userId, id);</span>
+<span class="fc" id="L125">    }</span>
+
+    private PortfolioResponse toResponse(Portfolio portfolio) {
+<span class="fc" id="L128">        return portfolioMapper.toResponse(portfolio, summaryProvider.summarize(portfolio));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

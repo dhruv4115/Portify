@@ -1,0 +1,15 @@
+# node_modules is 150MB and is reinstalled from the lockfile inside the build stage — shipping
+# it to the builder would add minutes to every deploy and risks a host-arch binary (esbuild,
+# rollup) leaking into a linux/amd64 image.
+node_modules/
+dist/
+
+# Local env files. Vite reads .env.local at build time, and on Railway the values must come from
+# service variables instead — a stale .env.local baked into the image would silently point the
+# deployed bundle at http://localhost:8080.
+.env
+.env.local
+.env.*.local
+
+.git/
+.DS_Store

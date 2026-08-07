@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RateLimitedProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata</a> &gt; <span class="el_source">RateLimitedProvider.java</span></div><h1>RateLimitedProvider.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata;
+
+import com.protify.portfolio.common.port.MarketDataProvider;
+import com.protify.portfolio.common.port.PriceQuote;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * D3-B2 — a decorator around any {@link MarketDataProvider}: token bucket (per-minute, plus an
+ * optional per-day cap), exponential backoff with jitter after a failure, and a 3-failure /
+ * 5-minute circuit breaker. Hand-rolled per ADR-0008 (&quot;Resilience4j would be better with a
+ * spare half-day... do not add the dependency today&quot;).
+ *
+ * &lt;p&gt;&lt;b&gt;Never calls the delegate&lt;/b&gt; while the bucket is empty, while in a post-failure backoff
+ * window, or while the circuit is open — and never lets an exception from the delegate escape.
+ * A miss for any of those reasons returns the same &quot;nothing available&quot; value the interface
+ * already uses for a real empty result ({@link Optional#empty()} / an empty {@link List}), so
+ * {@link CachingMarketDataService} falls through to {@code price_history} exactly as it does
+ * for any other empty result.
+ *
+ * &lt;p&gt;Not a {@code @Component} itself — see {@link RateLimitedProviderConfig} for why letting
+ * Spring autowire the wrapped delegate directly (rather than via a bean-collection factory
+ * method) would create ambiguity between this class and the adapter it wraps.
+ */
+public class RateLimitedProvider implements MarketDataProvider {
+
+<span class="fc" id="L35">    private static final Logger log = LoggerFactory.getLogger(RateLimitedProvider.class);</span>
+
+<span class="fc" id="L37">    private static final Duration OPEN_DURATION = Duration.ofMinutes(5);</span>
+    private static final int FAILURE_THRESHOLD = 3;
+<span class="fc" id="L39">    private static final Duration BASE_BACKOFF = Duration.ofMillis(200);</span>
+<span class="fc" id="L40">    private static final Duration MAX_BACKOFF = Duration.ofSeconds(5);</span>
+
+<span class="fc" id="L42">    private enum BreakerState { CLOSED, OPEN, HALF_OPEN }</span>
+
+    private final MarketDataProvider delegate;
+    private final Clock clock;
+    private final int capacityPerMinute;
+    private final int capacityPerDay; // &lt;= 0 means &quot;no documented daily cap&quot; (Yahoo)
+
+    private double minuteTokens;
+    private Instant minuteRefillAt;
+    private double dayTokens;
+    private Instant dayRefillAt;
+
+<span class="fc" id="L54">    private int consecutiveFailures = 0;</span>
+<span class="fc" id="L55">    private BreakerState state = BreakerState.CLOSED;</span>
+    private Instant openedAt;
+    private Instant backoffUntil;
+
+<span class="fc" id="L59">    public RateLimitedProvider(MarketDataProvider delegate, int capacityPerMinute, int capacityPerDay, Clock clock) {</span>
+<span class="fc" id="L60">        this.delegate = delegate;</span>
+<span class="fc" id="L61">        this.capacityPerMinute = capacityPerMinute;</span>
+<span class="fc" id="L62">        this.capacityPerDay = capacityPerDay;</span>
+<span class="fc" id="L63">        this.clock = clock;</span>
+<span class="fc" id="L64">        Instant now = clock.instant();</span>
+<span class="fc" id="L65">        this.minuteTokens = capacityPerMinute;</span>
+<span class="fc" id="L66">        this.minuteRefillAt = now;</span>
+<span class="fc" id="L67">        this.dayTokens = capacityPerDay;</span>
+<span class="fc" id="L68">        this.dayRefillAt = now;</span>
+<span class="fc" id="L69">    }</span>
+
+    @Override
+    public synchronized Optional&lt;PriceQuote&gt; latestPrice(String symbol) {
+<span class="nc" id="L73">        return guarded(() -&gt; delegate.latestPrice(symbol), Optional.empty(), &quot;latestPrice(&quot; + symbol + &quot;)&quot;);</span>
+    }
+
+    @Override
+    public synchronized List&lt;PriceQuote&gt; dailyCloses(String symbol, LocalDate from, LocalDate to) {
+<span class="fc" id="L78">        return guarded(() -&gt; delegate.dailyCloses(symbol, from, to), List.of(), &quot;dailyCloses(&quot; + symbol + &quot;)&quot;);</span>
+    }
+
+    @Override
+    public String sourceName() {
+<span class="fc" id="L83">        return delegate.sourceName();</span>
+    }
+
+    /** Read-only, for {@code health/MarketDataHealthIndicator} — a stale price is not an
+     * outage, so health reporting inspects breaker state rather than calling the provider. */
+    public synchronized boolean isCircuitOpen() {
+<span class="pc bpc" id="L89" title="1 of 4 branches missed.">        return state == BreakerState.OPEN &amp;&amp; clock.instant().isBefore(openedAt.plus(OPEN_DURATION));</span>
+    }
+
+    private &lt;T&gt; T guarded(Supplier&lt;T&gt; call, T emptyValue, String opName) {
+<span class="fc" id="L93">        Instant now = clock.instant();</span>
+
+<span class="fc bfc" id="L95" title="All 2 branches covered.">        if (state == BreakerState.OPEN) {</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (now.isBefore(openedAt.plus(OPEN_DURATION))) {</span>
+<span class="fc" id="L97">                log.warn(&quot;Circuit open for {}; skipping call to {}&quot;, delegate.sourceName(), opName);</span>
+<span class="fc" id="L98">                return emptyValue;</span>
+            }
+<span class="fc" id="L100">            state = BreakerState.HALF_OPEN;</span>
+<span class="fc" id="L101">            log.info(&quot;Circuit half-open for {}; allowing a trial call to {}&quot;, delegate.sourceName(), opName);</span>
+        }
+
+<span class="fc bfc" id="L104" title="All 4 branches covered.">        if (backoffUntil != null &amp;&amp; now.isBefore(backoffUntil)) {</span>
+<span class="fc" id="L105">            log.warn(&quot;Backing off {} until {}; skipping call to {}&quot;, delegate.sourceName(), backoffUntil, opName);</span>
+<span class="fc" id="L106">            return emptyValue;</span>
+        }
+
+<span class="fc bfc" id="L109" title="All 2 branches covered.">        if (!tryConsumeToken(now)) {</span>
+<span class="fc" id="L110">            log.warn(&quot;Token bucket exhausted for {}; skipping call to {}&quot;, delegate.sourceName(), opName);</span>
+<span class="fc" id="L111">            return emptyValue;</span>
+        }
+
+        try {
+<span class="fc" id="L115">            T result = call.get();</span>
+<span class="fc" id="L116">            onSuccess();</span>
+<span class="fc" id="L117">            return result;</span>
+<span class="fc" id="L118">        } catch (RuntimeException e) {</span>
+<span class="fc" id="L119">            onFailure(now);</span>
+<span class="fc" id="L120">            log.warn(&quot;{} failed for {}: {}&quot;, opName, delegate.sourceName(), e.getMessage());</span>
+<span class="fc" id="L121">            return emptyValue;</span>
+        }
+    }
+
+    private boolean tryConsumeToken(Instant now) {
+<span class="fc" id="L126">        refill(now);</span>
+<span class="pc bpc" id="L127" title="3 of 4 branches missed.">        if (capacityPerDay &gt; 0 &amp;&amp; dayTokens &lt; 1.0) {</span>
+<span class="nc" id="L128">            return false;</span>
+        }
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        if (minuteTokens &lt; 1.0) {</span>
+<span class="fc" id="L131">            return false;</span>
+        }
+<span class="fc" id="L133">        minuteTokens -= 1.0;</span>
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        if (capacityPerDay &gt; 0) {</span>
+<span class="nc" id="L135">            dayTokens -= 1.0;</span>
+        }
+<span class="fc" id="L137">        return true;</span>
+    }
+
+    private void refill(Instant now) {
+<span class="fc" id="L141">        Duration sinceMinuteRefill = Duration.between(minuteRefillAt, now);</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        if (sinceMinuteRefill.toMillis() &gt; 0) {</span>
+<span class="fc" id="L143">            double toAdd = sinceMinuteRefill.toMillis() / 60_000.0 * capacityPerMinute;</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">            if (toAdd &gt; 0) {</span>
+<span class="fc" id="L145">                minuteTokens = Math.min(capacityPerMinute, minuteTokens + toAdd);</span>
+<span class="fc" id="L146">                minuteRefillAt = now;</span>
+            }
+        }
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">        if (capacityPerDay &gt; 0) {</span>
+<span class="nc" id="L150">            Duration sinceDayRefill = Duration.between(dayRefillAt, now);</span>
+<span class="nc bnc" id="L151" title="All 2 branches missed.">            if (sinceDayRefill.toMillis() &gt; 0) {</span>
+<span class="nc" id="L152">                double toAdd = sinceDayRefill.toMillis() / 86_400_000.0 * capacityPerDay;</span>
+<span class="nc bnc" id="L153" title="All 2 branches missed.">                if (toAdd &gt; 0) {</span>
+<span class="nc" id="L154">                    dayTokens = Math.min(capacityPerDay, dayTokens + toAdd);</span>
+<span class="nc" id="L155">                    dayRefillAt = now;</span>
+                }
+            }
+        }
+<span class="fc" id="L159">    }</span>
+
+    private void onSuccess() {
+<span class="fc" id="L162">        consecutiveFailures = 0;</span>
+<span class="fc" id="L163">        backoffUntil = null;</span>
+<span class="fc bfc" id="L164" title="All 2 branches covered.">        if (state == BreakerState.HALF_OPEN) {</span>
+<span class="fc" id="L165">            log.info(&quot;Circuit closed for {} after a successful trial call&quot;, delegate.sourceName());</span>
+        }
+<span class="fc" id="L167">        state = BreakerState.CLOSED;</span>
+<span class="fc" id="L168">    }</span>
+
+    private void onFailure(Instant now) {
+<span class="fc" id="L171">        consecutiveFailures++;</span>
+<span class="fc" id="L172">        long backoffMillis = Math.min(MAX_BACKOFF.toMillis(),</span>
+<span class="fc" id="L173">                BASE_BACKOFF.toMillis() * (1L &lt;&lt; Math.min(consecutiveFailures - 1, 10)));</span>
+<span class="fc" id="L174">        long jitterMillis = ThreadLocalRandom.current().nextLong(0, backoffMillis / 2 + 1);</span>
+<span class="fc" id="L175">        backoffUntil = now.plusMillis(backoffMillis + jitterMillis);</span>
+
+<span class="pc bpc" id="L177" title="1 of 2 branches missed.">        if (state == BreakerState.HALF_OPEN) {</span>
+<span class="nc" id="L178">            state = BreakerState.OPEN;</span>
+<span class="nc" id="L179">            openedAt = now;</span>
+<span class="nc" id="L180">            log.warn(&quot;Trial call failed; circuit re-opened for {} until {}&quot;, delegate.sourceName(), openedAt.plus(OPEN_DURATION));</span>
+<span class="fc bfc" id="L181" title="All 2 branches covered.">        } else if (consecutiveFailures &gt;= FAILURE_THRESHOLD) {</span>
+<span class="fc" id="L182">            state = BreakerState.OPEN;</span>
+<span class="fc" id="L183">            openedAt = now;</span>
+<span class="fc" id="L184">            log.warn(&quot;{} consecutive failures; circuit opened for {} until {}&quot;, consecutiveFailures,</span>
+<span class="fc" id="L185">                    delegate.sourceName(), openedAt.plus(OPEN_DURATION));</span>
+        }
+<span class="fc" id="L187">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

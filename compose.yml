@@ -1,0 +1,133 @@
+# D4-B2/D5-B3 — the whole product as three containers: MySQL 8.4 + the API + the React SPA,
+# from a clean volume every time this is tested
+# (acceptance: `docker compose down -v && docker compose up --build`).
+# Secrets all come from the repo-root `.env` (git-ignored); `.env.example` documents every key
+# with a placeholder.
+#
+# Run from the repo root: `docker compose up --build`
+#
+# This file lives at the repo root rather than in docker/ for one specific reason: Compose reads
+# `.env` from the directory holding the compose file, and uses it for `${...}` interpolation.
+# From docker/, `${GOOGLE_CLIENT_ID}` in the `web` build args below silently resolved to the
+# empty string — the image built fine and Google sign-in just quietly fell back to
+# paste-a-token-by-hand. `env_file:` does NOT fix that: it populates the container's runtime
+# environment, which is a different thing from build-time interpolation.
+#
+#   http://localhost:3000  → the app (start here)
+#   http://localhost:8080  → the API directly (Swagger, GraphQL, actuator)
+#
+# The insights service is behind a compose profile, so a plain `up` starts exactly the three
+# containers the product needs. Add it with `--profile insights` when you want it.
+#
+# D5-B3 acceptance: `docker compose stop insights` (or leaving the profile off, which is now the
+# default) must not break the API — every other endpoint keeps working, and any insights call
+# degrades to the Java rule-based fallback (InsightsClient, D5-B2) rather than failing.
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-changeme}
+      MYSQL_DATABASE: portfolio
+      MYSQL_USER: ${DB_USERNAME:-protify}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-changeme}
+    # UTC at the server level too, not just on the JDBC URL — belt and suspenders against
+    # DATETIME drift (/docs/RISKS.md R13).
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      # Host port is configurable because a developer machine very often already has a MySQL on
+      # 3306 — set MYSQL_PORT in .env rather than stopping the local server. Only the left side
+      # moves; nothing inside the compose network is affected.
+      - "${MYSQL_PORT:-3306}:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-changeme}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Overrides the .env value (which points at "localhost" for a developer running the jar
+      # directly) — inside the compose network the API must reach MySQL by service name.
+      DB_URL: jdbc:mysql://mysql:3306/portfolio?serverTimezone=UTC
+      DB_USERNAME: ${DB_USERNAME:-protify}
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      # Service name, not localhost — same reasoning as DB_URL above. Deliberately NOT gated
+      # behind a depends_on/service_healthy on `insights` below: InsightsClient (D5-B2) already
+      # tolerates the insights service being down or absent (short connect timeout, Java rule-based
+      # fallback), and the API must keep working when insights is stopped (D5-B3 acceptance).
+      INSIGHTS_SERVICE_URL: http://insights:8000
+    ports:
+      # If you change API_PORT you must change VITE_API_BASE_URL to match — the browser talks to
+      # the published port, and the frontend has that URL compiled into its bundle.
+      - "${API_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        # Without this the API starts before MySQL accepts connections, Flyway fails, and the
+        # container restart-loops — the single most common compose mistake (D4-B2).
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./protify-frontend
+      dockerfile: Dockerfile
+      # Vite inlines VITE_* at BUILD time, so these are build args, not runtime environment —
+      # setting them under `environment:` would do nothing at all. Changing either one needs
+      # `up --build`, not `restart`.
+      args:
+        # The browser resolves this, not the web container, so it must be the host-published
+        # address of the API — `http://api:8080` is only reachable from inside the compose
+        # network and would fail in the user's browser.
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:${API_PORT:-8080}}
+        # Same client ID the API validates the token's `aud` against — one value in `.env`,
+        # used on both sides, so they cannot drift apart.
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    restart: unless-stopped
+    environment:
+      # nginx.conf listens on ${PORT} so the same image serves Railway (which assigns a port)
+      # and compose unchanged.
+      PORT: 80
+    ports:
+      - "${WEB_PORT:-3000}:80"
+    depends_on:
+      # Only service_started, not service_healthy: nginx serves the SPA shell fine before the API
+      # is up, and gating on it would keep the whole product dark during Flyway's first run.
+      - api
+
+  insights:
+    build:
+      context: ./services/insights
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    # Off unless you ask for it: `docker compose --profile insights up`. FEATURES_INSIGHTS_ENABLED
+    # defaults to false anyway, so starting it without also flipping that flag changes nothing.
+    profiles:
+      - insights
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mysql_data:

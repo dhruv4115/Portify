@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>SecurityConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.security</a> &gt; <span class="el_source">SecurityConfig.java</span></div><h1>SecurityConfig.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.security;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
+import org.springframework.security.oauth2.core.OAuth2TokenValidator;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtDecoders;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.web.AuthenticationEntryPoint;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.access.AccessDeniedHandler;
+import org.springframework.security.web.access.intercept.AuthorizationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.servlet.HandlerExceptionResolver;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
+/**
+ * D1-B1 — OAuth2 resource server. The Google ID token is the bearer token (ADR-0004); Spring
+ * fetches Google's JWKS and validates signature, issuer and audience from
+ * {@code spring.security.oauth2.resourceserver.jwt.*} in application.properties. No JWT parsing
+ * or validation is hand-written here — every historical JWT vulnerability comes from that.
+ *
+ * &lt;p&gt;401/403 bodies are &lt;em&gt;not&lt;/em&gt; built here: the entry point and access-denied handler both
+ * delegate to Spring MVC's {@code HandlerExceptionResolver}, which routes the exception into
+ * Dev C's {@code GlobalExceptionHandler} — the same {@code AuthenticationException}/
+ * {@code AccessDeniedException} handlers already there, one {@code ProblemDetail} shape
+ * everywhere, no second JSON-writing code path to keep in sync.
+ */
+@Configuration
+@EnableWebSecurity
+<span class="fc" id="L51">public class SecurityConfig {</span>
+
+<span class="fc" id="L53">    private static final Logger log = LoggerFactory.getLogger(SecurityConfig.class);</span>
+
+<span class="fc" id="L55">    private static final String[] PERMIT_ALL = {</span>
+            &quot;/actuator/health&quot;,
+            &quot;/v3/api-docs/**&quot;,
+            &quot;/swagger-ui/**&quot;,
+            &quot;/swagger-ui.html&quot;
+    };
+
+    @Value(&quot;${app.cors.allowed-origins:http://localhost:5173,http://localhost:3000}&quot;)
+    private List&lt;String&gt; allowedOrigins;
+
+    @Bean
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                     EmailVerifiedFilter emailVerifiedFilter,
+                                                     AuthenticationEntryPoint authenticationEntryPoint,
+                                                     AccessDeniedHandler accessDeniedHandler) throws Exception {
+<span class="fc" id="L70">        http</span>
+<span class="fc" id="L71">                .csrf(AbstractHttpConfigurer::disable)</span>
+<span class="fc" id="L72">                .cors(cors -&gt; cors.configurationSource(corsConfigurationSource()))</span>
+<span class="fc" id="L73">                .sessionManagement(session -&gt; session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))</span>
+<span class="fc" id="L74">                .authorizeHttpRequests(auth -&gt; auth</span>
+<span class="fc" id="L75">                        .requestMatchers(PERMIT_ALL).permitAll()</span>
+<span class="fc" id="L76">                        .anyRequest().authenticated())</span>
+                // The entry point MUST also be set here, not only via .exceptionHandling(...):
+                // oauth2ResourceServer() installs its own default BearerTokenAuthenticationEntryPoint
+                // for bearer-token requests, which otherwise wins and bypasses GlobalExceptionHandler.
+<span class="fc" id="L80">                .oauth2ResourceServer(oauth2 -&gt; oauth2</span>
+<span class="fc" id="L81">                        .jwt(Customizer.withDefaults())</span>
+<span class="fc" id="L82">                        .authenticationEntryPoint(authenticationEntryPoint))</span>
+<span class="fc" id="L83">                .exceptionHandling(ex -&gt; ex</span>
+<span class="fc" id="L84">                        .authenticationEntryPoint(authenticationEntryPoint)</span>
+<span class="fc" id="L85">                        .accessDeniedHandler(accessDeniedHandler))</span>
+                // after AuthorizationFilter: only requests that already passed &quot;must be
+                // authenticated&quot; reach it, so an unverified email correctly gets 403, never 401.
+<span class="fc" id="L88">                .addFilterAfter(emailVerifiedFilter, AuthorizationFilter.class);</span>
+
+<span class="fc" id="L90">        return http.build();</span>
+    }
+
+    @Bean
+    public AuthenticationEntryPoint authenticationEntryPoint(
+            @Qualifier(&quot;handlerExceptionResolver&quot;) HandlerExceptionResolver resolver) {
+<span class="fc" id="L96">        return (request, response, authException) -&gt; {</span>
+            // R6: the reason must be distinguishable in the logs even though the response body
+            // (built by GlobalExceptionHandler, below) is deliberately generic for every case.
+<span class="fc" id="L99">            log.warn(&quot;Unauthenticated request to {} rejected: {}&quot;,</span>
+<span class="fc" id="L100">                    request.getRequestURI(), AuthenticationFailureReasons.reasonFor(authException));</span>
+<span class="fc" id="L101">            resolver.resolveException(request, response, null, authException);</span>
+<span class="fc" id="L102">        };</span>
+    }
+
+    @Bean
+    public AccessDeniedHandler accessDeniedHandler(
+            @Qualifier(&quot;handlerExceptionResolver&quot;) HandlerExceptionResolver resolver) {
+<span class="fc" id="L108">        return (request, response, accessDeniedException) -&gt;</span>
+<span class="fc" id="L109">                resolver.resolveException(request, response, null, accessDeniedException);</span>
+    }
+
+    @Bean
+    public EmailVerifiedFilter emailVerifiedFilter() {
+<span class="fc" id="L114">        return new EmailVerifiedFilter();</span>
+    }
+
+    /**
+     * Explicit, not Boot's auto-configured one: {@code OAuth2ResourceServerAutoConfiguration}
+     * is excluded globally (application.properties) because its own default
+     * {@code SecurityFilterChain} otherwise auto-secures every test slice that doesn't
+     * {@code @Import} this class. {@code @Lazy} so this never makes the startup-time network
+     * call to fetch Google's JWKS/discovery document unless a request actually presents a
+     * bearer token — a request to a {@code permitAll} path (e.g. {@code /actuator/health} in
+     * {@code ApplicationContextLoadsTest}) never touches it. {@code @ConditionalOnMissingBean}
+     * so a test can still override it with a local-key stub (no test calls Google).
+     */
+    @Bean
+    @Lazy
+    @ConditionalOnMissingBean(JwtDecoder.class)
+    public JwtDecoder defaultGoogleJwtDecoder(
+            @Value(&quot;${spring.security.oauth2.resourceserver.jwt.issuer-uri}&quot;) String issuerUri,
+            @Value(&quot;${spring.security.oauth2.resourceserver.jwt.audiences:}&quot;) String audiencesProperty) {
+<span class="fc" id="L133">        var decoder = (org.springframework.security.oauth2.jwt.NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri);</span>
+
+<span class="fc" id="L135">        List&lt;String&gt; audiences = Arrays.stream(audiencesProperty.split(&quot;,&quot;))</span>
+<span class="fc" id="L136">                .map(String::strip)</span>
+<span class="pc bpc" id="L137" title="1 of 2 branches missed.">                .filter(a -&gt; !a.isBlank())</span>
+<span class="fc" id="L138">                .toList();</span>
+
+<span class="fc" id="L140">        List&lt;OAuth2TokenValidator&lt;Jwt&gt;&gt; validators = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L141">        validators.add(JwtValidators.createDefaultWithIssuer(issuerUri));</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">        if (!audiences.isEmpty()) {</span>
+<span class="fc" id="L143">            validators.add(new JwtClaimValidator&lt;List&lt;String&gt;&gt;(JwtClaimNames.AUD,</span>
+<span class="nc bnc" id="L144" title="All 4 branches missed.">                    aud -&gt; aud != null &amp;&amp; aud.stream().anyMatch(audiences::contains)));</span>
+        }
+<span class="fc" id="L146">        decoder.setJwtValidator(new DelegatingOAuth2TokenValidator&lt;&gt;(validators));</span>
+<span class="fc" id="L147">        return decoder;</span>
+    }
+
+    private CorsConfigurationSource corsConfigurationSource() {
+<span class="fc" id="L151">        CorsConfiguration configuration = new CorsConfiguration();</span>
+<span class="fc" id="L152">        configuration.setAllowedOrigins(allowedOrigins);</span>
+<span class="fc" id="L153">        configuration.setAllowedMethods(List.of(&quot;GET&quot;, &quot;POST&quot;, &quot;PUT&quot;, &quot;PATCH&quot;, &quot;DELETE&quot;, &quot;OPTIONS&quot;));</span>
+<span class="fc" id="L154">        configuration.setAllowedHeaders(List.of(&quot;Authorization&quot;, &quot;Content-Type&quot;, &quot;X-Correlation-Id&quot;));</span>
+<span class="fc" id="L155">        configuration.setExposedHeaders(List.of(&quot;X-Correlation-Id&quot;));</span>
+<span class="fc" id="L156">        configuration.setAllowCredentials(false);</span>
+
+<span class="fc" id="L158">        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();</span>
+<span class="fc" id="L159">        source.registerCorsConfiguration(&quot;/**&quot;, configuration);</span>
+<span class="fc" id="L160">        return source;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

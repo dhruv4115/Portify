@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InstrumentRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.instrument</a> &gt; <span class="el_source">InstrumentRepository.java</span></div><h1>InstrumentRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.instrument;
+
+import com.protify.portfolio.common.enums.AssetType;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.support.BaseRepository;
+import java.util.Collection;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+/** Not user-scoped — the instrument catalogue is shared across everyone. */
+@Repository
+public class InstrumentRepository extends BaseRepository {
+
+    private static final int MAX_SEARCH_LIMIT = 50;
+
+    public InstrumentRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L22">        super(jdbcTemplate);</span>
+<span class="fc" id="L23">    }</span>
+
+    /** Case-insensitive, trimmed — {@code &quot; aapl &quot;} resolves to {@code AAPL}. */
+    public Optional&lt;Instrument&gt; findBySymbol(String symbol) {
+<span class="fc" id="L27">        String sql = &quot;SELECT * FROM instrument WHERE UPPER(symbol) = UPPER(:symbol)&quot;;</span>
+<span class="fc" id="L28">        var params = new MapSqlParameterSource(&quot;symbol&quot;, symbol.strip());</span>
+<span class="fc" id="L29">        List&lt;Instrument&gt; results = jdbcTemplate.query(sql, params, new InstrumentRowMapper());</span>
+<span class="fc" id="L30">        return results.stream().findFirst();</span>
+    }
+
+    /** Valuation needs the native currency of each instrument it holds, keyed by {@code
+     * holding.instrument_id} — this is the lookup for that, not user-scoped like the rest of
+     * the catalogue. */
+    public Optional&lt;Instrument&gt; findById(long id) {
+<span class="fc" id="L37">        String sql = &quot;SELECT * FROM instrument WHERE id = :id&quot;;</span>
+<span class="fc" id="L38">        var params = new MapSqlParameterSource(&quot;id&quot;, id);</span>
+<span class="fc" id="L39">        List&lt;Instrument&gt; results = jdbcTemplate.query(sql, params, new InstrumentRowMapper());</span>
+<span class="fc" id="L40">        return results.stream().findFirst();</span>
+    }
+
+    /**
+     * The batch form of {@link #findById}, keyed by id — day-5-dev-A.md D5-A3.
+     *
+     * &lt;p&gt;Valuing a portfolio means resolving every held instrument, and doing that one
+     * {@code findById} at a time is an N+1: twenty round trips where one {@code IN} does. Each of
+     * those lookups is already a primary-key hit ({@code type=const} under EXPLAIN), so what this
+     * saves is not index work, it is the round trips — which is why the fix is here and not in
+     * {@code V4__perf_indexes.sql}.
+     *
+     * &lt;p&gt;An empty collection short-circuits: {@code IN ()} is a syntax error in MySQL, not an
+     * empty result. Ids with no row are simply absent from the map, exactly as {@code findById}
+     * returns empty for them.
+     */
+    public Map&lt;Long, Instrument&gt; findAllByIds(Collection&lt;Long&gt; ids) {
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">        if (ids.isEmpty()) {</span>
+<span class="nc" id="L58">            return Map.of();</span>
+        }
+<span class="fc" id="L60">        String sql = &quot;SELECT * FROM instrument WHERE id IN (:ids)&quot;;</span>
+<span class="fc" id="L61">        var params = new MapSqlParameterSource(&quot;ids&quot;, ids);</span>
+<span class="fc" id="L62">        Map&lt;Long, Instrument&gt; byId = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        for (Instrument instrument : jdbcTemplate.query(sql, params, new InstrumentRowMapper())) {</span>
+<span class="fc" id="L64">            byId.put(instrument.id(), instrument);</span>
+<span class="fc" id="L65">        }</span>
+<span class="fc" id="L66">        return byId;</span>
+    }
+
+    /** Ranks symbol-prefix matches above name-substring matches, in SQL, via a {@code CASE} in
+     * {@code ORDER BY} — never sorted in Java. */
+    public List&lt;Instrument&gt; search(String query, AssetType type, CurrencyCode currency, int limit) {
+<span class="fc" id="L72">        int effectiveLimit = Math.min(limit, MAX_SEARCH_LIMIT);</span>
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        String normalizedQuery = query == null ? null : query.strip();</span>
+
+<span class="fc" id="L75">        String sql = &quot;&quot;&quot;</span>
+                SELECT * FROM instrument
+                WHERE (:query IS NULL
+                       OR symbol LIKE CONCAT(:query, '%')
+                       OR name LIKE CONCAT('%', :query, '%'))
+                  AND (:type IS NULL OR asset_type = :type)
+                  AND (:currency IS NULL OR currency = :currency)
+                ORDER BY
+                  CASE WHEN symbol LIKE CONCAT(:query, '%') THEN 0 ELSE 1 END,
+                  symbol
+                LIMIT :limit
+                &quot;&quot;&quot;;
+<span class="fc" id="L87">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L88">                .addValue(&quot;query&quot;, normalizedQuery)</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">                .addValue(&quot;type&quot;, type == null ? null : type.name())</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">                .addValue(&quot;currency&quot;, currency == null ? null : currency.name())</span>
+<span class="fc" id="L91">                .addValue(&quot;limit&quot;, effectiveLimit);</span>
+
+<span class="fc" id="L93">        return jdbcTemplate.query(sql, params, new InstrumentRowMapper());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationResult.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationResult.java</span></div><h1>ValuationResult.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+/**
+ * API_CONTRACT.md §11's fields, computed rather than transported — Dev C's mapper turns
+ * {@code priceAsOf}/{@code rateAsOf}/{@code stale} into a {@code DataQualityDto} (day-3-dev-A.md
+ * D3-A3). {@code marketValue}, {@code totalValue} and {@code unrealisedPnl} are {@code null}
+ * only when the portfolio holds at least one open position and genuinely none of them could be
+ * priced — an empty or cash-only portfolio reports zero, never {@code null}, for those fields.
+ */
+<span class="fc" id="L14">public record ValuationResult(</span>
+        long portfolioId,
+        LocalDate asOf,
+        CurrencyCode currency,
+        BigDecimal marketValue,
+        BigDecimal costBasis,
+        BigDecimal cashBalance,
+        BigDecimal totalValue,
+        BigDecimal unrealisedPnl,
+        BigDecimal realisedPnl,
+        BigDecimal unrealisedPnlPct,
+        int holdingCount,
+        LocalDate priceAsOf,
+        LocalDate rateAsOf,
+        boolean stale) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

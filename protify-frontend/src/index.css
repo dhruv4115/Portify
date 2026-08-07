@@ -1,0 +1,15 @@
+@import 'tailwindcss';
+
+@import './styles/tokens.css';
+@import './styles/base.css';
+@import './styles/animations.css';
+@import './styles/components.css';
+
+/**
+ * The theme is always an explicit `data-theme` attribute on <html>, never `prefers-color-scheme`
+ * alone: "system" is resolved to a concrete value in JavaScript before paint (see the inline
+ * script in index.html) and re-resolved when the OS setting changes. That keeps one source of
+ * truth — the attribute — so a `dark:` utility, a `[data-theme='dark']` rule and the settings UI
+ * can never disagree about which theme is live.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));

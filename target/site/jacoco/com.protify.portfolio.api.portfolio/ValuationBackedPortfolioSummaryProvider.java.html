@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationBackedPortfolioSummaryProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.portfolio</a> &gt; <span class="el_source">ValuationBackedPortfolioSummaryProvider.java</span></div><h1>ValuationBackedPortfolioSummaryProvider.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.portfolio;
+
+import com.protify.portfolio.api.dto.DataQualityDto;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.valuation.ValuationResult;
+import com.protify.portfolio.valuation.ValuationService;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import org.springframework.stereotype.Component;
+
+/**
+ * Real implementation of {@link PortfolioSummaryProvider}, backed by Dev A's
+ * {@link ValuationService} (landed Day 3) — replaces the Day 2
+ * {@code PlaceholderPortfolioSummaryProvider}, which reported every money field as zero because
+ * nothing existed yet to compute a real one. Valuation &quot;as of today, in the portfolio's own
+ * base currency&quot; is exactly what the list/create/detail responses need.
+ *
+ * &lt;p&gt;{@link ValuationResult#marketValue()} (and {@code totalValue}/{@code unrealisedPnl}) can be
+ * {@code null} when the portfolio holds at least one open position and genuinely none of them
+ * could be priced — that {@code null} is passed straight through rather than defaulted to zero,
+ * matching {@code ValuationMapper}'s rule for the same reason: zero would report an unpriced
+ * portfolio as worthless.
+ */
+@Component
+class ValuationBackedPortfolioSummaryProvider implements PortfolioSummaryProvider {
+
+    private final ValuationService valuationService;
+
+<span class="fc" id="L30">    ValuationBackedPortfolioSummaryProvider(ValuationService valuationService) {</span>
+<span class="fc" id="L31">        this.valuationService = valuationService;</span>
+<span class="fc" id="L32">    }</span>
+
+    @Override
+    public PortfolioSummary summarize(Portfolio portfolio) {
+<span class="fc" id="L36">        ValuationResult result = valuationService.valuate(</span>
+<span class="fc" id="L37">                portfolio.userId(), portfolio.id(), LocalDate.now(ZoneOffset.UTC), portfolio.baseCurrency());</span>
+
+<span class="fc" id="L39">        return new PortfolioSummary(</span>
+<span class="fc" id="L40">                result.holdingCount(),</span>
+<span class="fc" id="L41">                result.marketValue(),</span>
+<span class="fc" id="L42">                result.costBasis(),</span>
+<span class="fc" id="L43">                result.cashBalance(),</span>
+<span class="fc" id="L44">                result.unrealisedPnl(),</span>
+<span class="fc" id="L45">                result.realisedPnl(),</span>
+<span class="pc bpc" id="L46" title="1 of 2 branches missed.">                result.unrealisedPnlPct() == null ? null : result.unrealisedPnlPct().toPlainString(),</span>
+<span class="fc" id="L47">                new DataQualityDto(result.priceAsOf(), result.rateAsOf(), result.stale()));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

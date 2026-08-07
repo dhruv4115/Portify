@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MoneyUtils.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.common.money</a> &gt; <span class="el_source">MoneyUtils.java</span></div><h1>MoneyUtils.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.common.money;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+/**
+ * Every rounding decision in the codebase resolves here, and nowhere else.
+ */
+public final class MoneyUtils {
+
+    public static final int MONEY_SCALE = 4;
+    public static final int QUANTITY_SCALE = 6;
+    public static final int FX_SCALE = 8;
+<span class="fc" id="L14">    public static final RoundingMode ROUNDING = RoundingMode.HALF_UP;</span>
+
+    private MoneyUtils() {
+    }
+
+    public static BigDecimal money(BigDecimal v) {
+<span class="fc" id="L20">        return v.setScale(MONEY_SCALE, ROUNDING);</span>
+    }
+
+    public static BigDecimal quantity(BigDecimal v) {
+<span class="fc" id="L24">        return v.setScale(QUANTITY_SCALE, ROUNDING);</span>
+    }
+
+    public static BigDecimal fxRate(BigDecimal v) {
+<span class="fc" id="L28">        return v.setScale(FX_SCALE, ROUNDING);</span>
+    }
+
+    public static boolean isZero(BigDecimal v) {
+<span class="fc bfc" id="L32" title="All 2 branches covered.">        return v.compareTo(BigDecimal.ZERO) == 0;</span>
+    }
+
+    public static boolean isNegative(BigDecimal v) {
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        return v.compareTo(BigDecimal.ZERO) &lt; 0;</span>
+    }
+
+    /**
+     * {@code null} rather than throwing on division by zero — an empty portfolio and a
+     * cash-only portfolio both hit this in normal operation, not just as an edge case.
+     */
+    public static BigDecimal safeDivide(BigDecimal a, BigDecimal b, int scale) {
+<span class="fc bfc" id="L44" title="All 2 branches covered.">        if (isZero(b)) {</span>
+<span class="fc" id="L45">            return null;</span>
+        }
+<span class="fc" id="L47">        return a.divide(b, scale, ROUNDING);</span>
+    }
+
+    /**
+     * Percentage change from {@code from} to {@code to}, e.g. {@code pctChange(100, 110)} is
+     * {@code 10.0000}. {@code null} when {@code from} is zero — a named customer requirement,
+     * not an omission. Never {@code Infinity}, never {@code 0}, never an exception.
+     */
+    public static BigDecimal pctChange(BigDecimal from, BigDecimal to) {
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (isZero(from)) {</span>
+<span class="fc" id="L57">            return null;</span>
+        }
+<span class="fc" id="L59">        BigDecimal ratio = to.subtract(from).divide(from, MONEY_SCALE + 4, ROUNDING);</span>
+<span class="fc" id="L60">        return ratio.multiply(BigDecimal.valueOf(100)).setScale(MONEY_SCALE, ROUNDING);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

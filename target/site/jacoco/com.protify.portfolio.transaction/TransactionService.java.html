@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.transaction</a> &gt; <span class="el_source">TransactionService.java</span></div><h1>TransactionService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.transaction;
+
+import com.protify.portfolio.common.enums.TransactionType;
+import com.protify.portfolio.common.error.CurrencyMismatchException;
+import com.protify.portfolio.common.error.NotFoundException;
+import com.protify.portfolio.common.error.ValidationException;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.holding.HoldingRepository;
+import com.protify.portfolio.holding.HoldingState;
+import com.protify.portfolio.holding.ProjectionContext;
+import com.protify.portfolio.holding.ProjectionEngine;
+import com.protify.portfolio.holding.ProjectionResult;
+import com.protify.portfolio.instrument.Instrument;
+import com.protify.portfolio.instrument.InstrumentRepository;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.valuation.ValuationFolder;
+import com.protify.portfolio.valuation.ValuationSnapshotService;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+/**
+ * The customer's &quot;add&quot; and &quot;remove&quot; (day-3-dev-A.md D3-A1/D3-A2). Each public method is one
+ * atomic DB transaction — via an explicit {@link TransactionTemplate} rather than a
+ * container-managed {@code @Transactional} proxy, so the same code path is exercisable from a
+ * plain unit test (a mocked {@link PlatformTransactionManager} still runs the callback) and from
+ * an integration test (a real one, built directly from the test datasource) without either
+ * needing a full {@code ApplicationContext} — see {@code TransactionServiceIT}.
+ *
+ * &lt;p&gt;The projection is never persisted piecemeal: {@link #record} upserts only the one
+ * instrument a BUY/SELL touches (every other holding is provably unchanged by a single new
+ * transaction), while {@link #delete} clears and replays the whole portfolio, because a
+ * mid-history delete can shift every subsequent holding (CLAUDE.md non-negotiable #12).
+ */
+@Service
+public class TransactionService {
+
+<span class="fc" id="L45">    private static final Set&lt;TransactionType&gt; REQUIRES_POSITIVE_QUANTITY =</span>
+<span class="fc" id="L46">            EnumSet.of(TransactionType.BUY, TransactionType.SELL, TransactionType.DIVIDEND);</span>
+<span class="fc" id="L47">    private static final Set&lt;TransactionType&gt; REQUIRES_ZERO_QUANTITY =</span>
+<span class="fc" id="L48">            EnumSet.of(TransactionType.DEPOSIT, TransactionType.WITHDRAWAL, TransactionType.FEE);</span>
+<span class="fc" id="L49">    private static final Set&lt;TransactionType&gt; REQUIRES_SYMBOL =</span>
+<span class="fc" id="L50">            EnumSet.of(TransactionType.BUY, TransactionType.SELL, TransactionType.DIVIDEND, TransactionType.FEE);</span>
+<span class="fc" id="L51">    private static final Set&lt;TransactionType&gt; FORBIDS_SYMBOL =</span>
+<span class="fc" id="L52">            EnumSet.of(TransactionType.DEPOSIT, TransactionType.WITHDRAWAL);</span>
+<span class="fc" id="L53">    private static final Set&lt;TransactionType&gt; AFFECTS_HOLDING =</span>
+<span class="fc" id="L54">            EnumSet.of(TransactionType.BUY, TransactionType.SELL);</span>
+
+    private final PortfolioService portfolioService;
+    private final InstrumentRepository instrumentRepository;
+    private final TransactionRepository transactionRepository;
+    private final HoldingRepository holdingRepository;
+    private final ValuationSnapshotService snapshotService;
+    private final TransactionTemplate transactionTemplate;
+
+    public TransactionService(
+            PortfolioService portfolioService,
+            InstrumentRepository instrumentRepository,
+            TransactionRepository transactionRepository,
+            HoldingRepository holdingRepository,
+            ValuationSnapshotService snapshotService,
+<span class="fc" id="L69">            PlatformTransactionManager transactionManager) {</span>
+<span class="fc" id="L70">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L71">        this.instrumentRepository = instrumentRepository;</span>
+<span class="fc" id="L72">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L73">        this.holdingRepository = holdingRepository;</span>
+<span class="fc" id="L74">        this.snapshotService = snapshotService;</span>
+<span class="fc" id="L75">        this.transactionTemplate = new TransactionTemplate(transactionManager);</span>
+<span class="fc" id="L76">    }</span>
+
+    public RecordTransactionResult record(long userId, long portfolioId, RecordTransactionCommand command) {
+<span class="fc" id="L79">        validate(command);</span>
+<span class="fc" id="L80">        return transactionTemplate.execute(status -&gt; doRecord(userId, portfolioId, command));</span>
+    }
+
+    private RecordTransactionResult doRecord(long userId, long portfolioId, RecordTransactionCommand command) {
+<span class="fc" id="L84">        Portfolio portfolio = portfolioService.lockForUpdate(userId, portfolioId);</span>
+
+<span class="fc" id="L86">        Instrument instrument = resolveAndValidateInstrument(command);</span>
+
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        Txn candidate = new Txn(null, portfolioId, instrument == null ? null : instrument.id(),</span>
+<span class="fc" id="L89">                command.txnType(), command.quantity(), command.price(), command.fees(),</span>
+<span class="fc" id="L90">                command.currency(), command.executedAt(), command.note(), null);</span>
+
+<span class="fc" id="L92">        List&lt;Txn&gt; history = new ArrayList&lt;&gt;(transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId));</span>
+<span class="fc" id="L93">        history.add(candidate);</span>
+
+        // Native run: throws InsufficientQuantityException here, before anything is written.
+<span class="fc" id="L96">        ProjectionResult projected = ProjectionEngine.project(history, ProjectionContext.identity(portfolio.baseCurrency()));</span>
+
+<span class="fc" id="L98">        long txnId = transactionRepository.insert(candidate);</span>
+
+        // Every valuation from this transaction's date onward is now wrong (day-5-dev-A.md
+        // D5-A2). Inside the same DB transaction as the write, so the cache cannot end up
+        // emptied by a write that then rolled back — the same rule that binds the holdings
+        // projection to the transaction that caused it (CLAUDE.md non-negotiable #12).
+<span class="fc" id="L104">        snapshotService.invalidateFrom(portfolioId, ValuationFolder.dateOf(candidate));</span>
+
+<span class="fc bfc" id="L106" title="All 2 branches covered.">        if (AFFECTS_HOLDING.contains(command.txnType())) {</span>
+            // validate() already rejected a BUY/SELL with no symbol, so instrument is resolved.
+<span class="fc" id="L108">            long instrumentId = Objects.requireNonNull(instrument, &quot;instrument&quot;).id();</span>
+<span class="fc" id="L109">            HoldingState state = projected.holdingsByInstrument().get(instrumentId);</span>
+<span class="fc" id="L110">            holdingRepository.upsert(portfolioId, state);</span>
+        }
+
+<span class="fc" id="L113">        List&lt;String&gt; warnings = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (MoneyUtils.isNegative(projected.cashBalance())) {</span>
+<span class="fc" id="L115">            warnings.add(&quot;This transaction leaves the portfolio's cash balance negative.&quot;);</span>
+        }
+<span class="fc" id="L117">        return new RecordTransactionResult(txnId, warnings);</span>
+    }
+
+    public void delete(long userId, long portfolioId, long txnId) {
+<span class="fc" id="L121">        transactionTemplate.executeWithoutResult(status -&gt; doDelete(userId, portfolioId, txnId));</span>
+<span class="fc" id="L122">    }</span>
+
+    private void doDelete(long userId, long portfolioId, long txnId) {
+<span class="fc" id="L125">        Portfolio portfolio = portfolioService.lockForUpdate(userId, portfolioId);</span>
+
+        // Read before the delete: the row's date decides how far back the valuation cache has to
+        // be invalidated, and it is gone by the time the delete returns. This read is also what
+        // now answers &quot;no such transaction in this portfolio&quot; — the row cannot disappear between
+        // here and the delete below, because every write to this portfolio serialises behind the
+        // SELECT ... FOR UPDATE above (ADR-0002).
+<span class="fc" id="L132">        Txn doomed = transactionRepository.findByIdAndPortfolio(txnId, portfolioId)</span>
+<span class="fc" id="L133">                .orElseThrow(() -&gt; new NotFoundException(&quot;transaction&quot;, txnId));</span>
+
+<span class="fc" id="L135">        transactionRepository.deleteByIdAndPortfolio(txnId, portfolioId);</span>
+<span class="fc" id="L136">        snapshotService.invalidateFrom(portfolioId, ValuationFolder.dateOf(doomed));</span>
+
+<span class="fc" id="L138">        List&lt;Txn&gt; remaining = transactionRepository.findByPortfolioOrderByExecutedAt(portfolioId);</span>
+        // A later SELL that's lost its cover throws here — the delete and any upsert below
+        // roll back together with it (CLAUDE.md non-negotiable #12).
+<span class="fc" id="L141">        ProjectionResult rebuilt = ProjectionEngine.project(remaining, ProjectionContext.identity(portfolio.baseCurrency()));</span>
+
+<span class="fc" id="L143">        holdingRepository.deleteAllForPortfolio(portfolioId);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        for (HoldingState state : rebuilt.holdingsByInstrument().values()) {</span>
+<span class="fc" id="L145">            holdingRepository.upsert(portfolioId, state);</span>
+<span class="fc" id="L146">        }</span>
+<span class="fc" id="L147">    }</span>
+
+    private Instrument resolveAndValidateInstrument(RecordTransactionCommand command) {
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        if (command.symbol() == null) {</span>
+<span class="fc" id="L151">            return null;</span>
+        }
+<span class="fc" id="L153">        Instrument instrument = instrumentRepository.findBySymbol(command.symbol())</span>
+<span class="fc" id="L154">                .orElseThrow(() -&gt; new NotFoundException(&quot;instrument&quot;, command.symbol()));</span>
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (instrument.currency() != command.currency()) {</span>
+<span class="fc" id="L156">            throw new CurrencyMismatchException(instrument.currency(), command.currency());</span>
+        }
+<span class="fc" id="L158">        return instrument;</span>
+    }
+
+    private void validate(RecordTransactionCommand command) {
+<span class="fc" id="L162">        TransactionType type = command.txnType();</span>
+
+<span class="pc bpc" id="L164" title="1 of 4 branches missed.">        if (REQUIRES_SYMBOL.contains(type) &amp;&amp; command.symbol() == null) {</span>
+<span class="nc" id="L165">            throw new ValidationException(&quot;validation-failed&quot;, &quot;A symbol is required for a &quot; + type + &quot; transaction.&quot;);</span>
+        }
+<span class="pc bpc" id="L167" title="1 of 4 branches missed.">        if (FORBIDS_SYMBOL.contains(type) &amp;&amp; command.symbol() != null) {</span>
+<span class="nc" id="L168">            throw new ValidationException(&quot;validation-failed&quot;, &quot;A &quot; + type + &quot; transaction must not reference an instrument.&quot;);</span>
+        }
+<span class="fc bfc" id="L170" title="All 4 branches covered.">        if (REQUIRES_POSITIVE_QUANTITY.contains(type) &amp;&amp; command.quantity().signum() &lt;= 0) {</span>
+<span class="fc" id="L171">            throw new ValidationException(&quot;validation-failed&quot;, &quot;Quantity must be positive for a &quot; + type + &quot; transaction.&quot;);</span>
+        }
+<span class="pc bpc" id="L173" title="1 of 4 branches missed.">        if (REQUIRES_ZERO_QUANTITY.contains(type) &amp;&amp; command.quantity().signum() != 0) {</span>
+<span class="nc" id="L174">            throw new ValidationException(&quot;validation-failed&quot;, &quot;Quantity must be zero for a &quot; + type + &quot; transaction.&quot;);</span>
+        }
+<span class="pc bpc" id="L176" title="1 of 2 branches missed.">        if (command.quantity().signum() &lt; 0) {</span>
+<span class="nc" id="L177">            throw new ValidationException(&quot;validation-failed&quot;, &quot;Quantity must not be negative.&quot;);</span>
+        }
+<span class="fc bfc" id="L179" title="All 2 branches covered.">        if (command.executedAt().isAfter(Instant.now())) {</span>
+<span class="fc" id="L180">            throw new ValidationException(&quot;validation-failed&quot;, &quot;executedAt must not be in the future.&quot;);</span>
+        }
+<span class="fc" id="L182">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

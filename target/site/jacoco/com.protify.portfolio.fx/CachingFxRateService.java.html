@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CachingFxRateService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.fx</a> &gt; <span class="el_source">CachingFxRateService.java</span></div><h1>CachingFxRateService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.fx;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.enums.FxSource;
+import com.protify.portfolio.common.money.Money;
+import com.protify.portfolio.common.money.MoneyUtils;
+import com.protify.portfolio.common.port.FxQuote;
+import com.protify.portfolio.common.port.FxRateProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * D2-B3 — FX fallback chain: Caffeine (6 h TTL) → provider → {@code fx_rate} last-good row
+ * (which is also where the {@code V12} seed data lives, so &quot;seeded&quot; needs no separate step).
+ * Stores and reads a **USD pivot** (ADR-0011): a cross rate is
+ * {@code rate(USD→quote) ÷ rate(USD→base)}. Never hard-codes a rate, never throws on provider
+ * failure, never returns a future rate.
+ */
+@Service
+public class CachingFxRateService {
+
+<span class="fc" id="L33">    private static final Logger log = LoggerFactory.getLogger(CachingFxRateService.class);</span>
+<span class="fc" id="L34">    private static final Duration CACHE_TTL = Duration.ofHours(6);</span>
+<span class="fc" id="L35">    private static final CurrencyCode PIVOT = CurrencyCode.USD;</span>
+<span class="fc" id="L36">    private static final BigDecimal ONE = BigDecimal.ONE.setScale(8, RoundingMode.HALF_UP);</span>
+
+    private final FxRateProvider fxRateProvider;
+    private final FxRateRepository fxRateRepository;
+    private final Cache&lt;String, FxQuote&gt; cache;
+
+    @Autowired
+    public CachingFxRateService(FxRateProvider fxRateProvider, FxRateRepository fxRateRepository) {
+<span class="fc" id="L44">        this(fxRateProvider, fxRateRepository, Caffeine.newBuilder().expireAfterWrite(CACHE_TTL).build());</span>
+<span class="fc" id="L45">    }</span>
+
+    /** Test-only seam, mirrors {@link com.protify.portfolio.marketdata.CachingMarketDataService}. */
+    CachingFxRateService(FxRateProvider fxRateProvider, FxRateRepository fxRateRepository,
+<span class="fc" id="L49">                          Cache&lt;String, FxQuote&gt; cache) {</span>
+<span class="fc" id="L50">        this.fxRateProvider = fxRateProvider;</span>
+<span class="fc" id="L51">        this.fxRateRepository = fxRateRepository;</span>
+<span class="fc" id="L52">        this.cache = cache;</span>
+<span class="fc" id="L53">    }</span>
+
+    public Optional&lt;FxQuote&gt; rate(CurrencyCode from, CurrencyCode to, LocalDate date) {
+<span class="fc bfc" id="L56" title="All 2 branches covered.">        if (from == to) {</span>
+<span class="fc" id="L57">            return Optional.of(new FxQuote(from, to, date, ONE, FxSource.MANUAL));</span>
+        }
+
+<span class="fc" id="L60">        String cacheKey = from.name() + &quot;:&quot; + to.name() + &quot;:&quot; + date;</span>
+<span class="fc" id="L61">        FxQuote cached = cache.getIfPresent(cacheKey);</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">        if (cached != null) {</span>
+<span class="fc" id="L63">            return Optional.of(cached);</span>
+        }
+
+<span class="fc" id="L66">        refreshPivotFromProvider(date);</span>
+
+<span class="fc" id="L68">        Optional&lt;FxQuote&gt; result = crossRate(from, to, date);</span>
+<span class="fc" id="L69">        result.ifPresent(q -&gt; cache.put(cacheKey, q));</span>
+<span class="fc" id="L70">        return result;</span>
+    }
+
+    /** The shape valuation calls tomorrow: converted value plus the date the rate actually
+     * applies to. */
+    public Optional&lt;ConversionResult&gt; convert(Money money, CurrencyCode target, LocalDate date) {
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        if (money.currency() == target) {</span>
+<span class="fc" id="L77">            return Optional.of(ConversionResult.identity(money, date));</span>
+        }
+<span class="fc" id="L79">        return rate(money.currency(), target, date)</span>
+<span class="fc" id="L80">                .map(q -&gt; new ConversionResult(MoneyUtils.money(money.amount().multiply(q.rate())), target, q.date()));</span>
+    }
+
+    private void refreshPivotFromProvider(LocalDate date) {
+        // D3-B3: fetch this exact date at most once — if fx_rate already has every non-USD
+        // pivot row for it (from an earlier call, the scheduler, or an on-demand backfill via
+        // FxRefreshScheduler), a subsequent 6h-cache-expiry miss must not call the provider
+        // again for data it already has.
+<span class="fc" id="L88">        boolean alreadyHaveExactDate = java.util.Arrays.stream(CurrencyCode.values())</span>
+<span class="fc bfc" id="L89" title="All 2 branches covered.">                .filter(c -&gt; c != PIVOT)</span>
+<span class="fc" id="L90">                .allMatch(c -&gt; fxRateRepository.findExact(PIVOT, c, date).isPresent());</span>
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (alreadyHaveExactDate) {</span>
+<span class="fc" id="L92">            return;</span>
+        }
+
+        try {
+<span class="fc" id="L96">            Map&lt;CurrencyCode, BigDecimal&gt; rates = fxRateProvider.ratesFor(PIVOT, date);</span>
+<span class="fc" id="L97">            rates.forEach((currency, rate) -&gt; {</span>
+<span class="fc bfc" id="L98" title="All 2 branches covered.">                if (currency != PIVOT) {</span>
+<span class="fc" id="L99">                    fxRateRepository.upsert(PIVOT, currency, date, MoneyUtils.fxRate(rate), FxSource.FRANKFURTER);</span>
+                }
+<span class="fc" id="L101">            });</span>
+<span class="fc" id="L102">        } catch (RuntimeException e) {</span>
+            // Never propagate a provider failure — fall through to whatever fx_rate already has.
+<span class="fc" id="L104">            log.warn(&quot;FX provider failed for {}: {}&quot;, date, e.getMessage());</span>
+<span class="fc" id="L105">        }</span>
+<span class="fc" id="L106">    }</span>
+
+    private Optional&lt;FxQuote&gt; crossRate(CurrencyCode from, CurrencyCode to, LocalDate date) {
+<span class="fc" id="L109">        Optional&lt;FxRateRow&gt; fromPivot = pivotRate(from, date);</span>
+<span class="fc" id="L110">        Optional&lt;FxRateRow&gt; toPivot = pivotRate(to, date);</span>
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">        if (fromPivot.isEmpty() || toPivot.isEmpty()) {</span>
+<span class="fc" id="L112">            return Optional.empty();</span>
+        }
+
+<span class="fc" id="L115">        BigDecimal cross = MoneyUtils.fxRate(</span>
+<span class="fc" id="L116">                toPivot.get().rate().divide(fromPivot.get().rate(), 16, RoundingMode.HALF_UP));</span>
+        // The cross rate is only as fresh as its stalest component.
+<span class="fc bfc" id="L118" title="All 2 branches covered.">        LocalDate asOf = fromPivot.get().rateDate().isBefore(toPivot.get().rateDate())</span>
+<span class="fc" id="L119">                ? fromPivot.get().rateDate() : toPivot.get().rateDate();</span>
+<span class="fc bfc" id="L120" title="All 4 branches covered.">        FxSource source = (fromPivot.get().source() == FxSource.SEED || toPivot.get().source() == FxSource.SEED)</span>
+<span class="fc" id="L121">                ? FxSource.SEED : FxSource.FRANKFURTER;</span>
+
+<span class="fc" id="L123">        return Optional.of(new FxQuote(from, to, asOf, cross, source));</span>
+    }
+
+    private Optional&lt;FxRateRow&gt; pivotRate(CurrencyCode currency, LocalDate date) {
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        if (currency == PIVOT) {</span>
+<span class="fc" id="L128">            return Optional.of(new FxRateRow(PIVOT, PIVOT, date, ONE, FxSource.MANUAL));</span>
+        }
+<span class="fc" id="L130">        return fxRateRepository.mostRecentOnOrBefore(PIVOT, currency, date);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

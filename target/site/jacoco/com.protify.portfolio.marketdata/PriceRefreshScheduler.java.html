@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PriceRefreshScheduler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata</a> &gt; <span class="el_source">PriceRefreshScheduler.java</span></div><h1>PriceRefreshScheduler.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata;
+
+import com.protify.portfolio.common.port.MarketDataProvider;
+import com.protify.portfolio.common.port.PriceQuote;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Component;
+
+/**
+ * D3-B1 — daily scheduled price refresh, plus the service behind {@code POST
+ * /admin/prices/refresh} (Dev C exposes the endpoint; this is what it calls).
+ *
+ * &lt;p&gt;&lt;b&gt;The governing rule (ADR-0008, RISKS.md R4): providers are invoked only from here — by
+ * the scheduled job or the explicit admin trigger — never from a read path.&lt;/b&gt; Everything
+ * that reaches {@link #marketDataProvider} is the {@code @Primary} {@code RateLimitedProvider}
+ * (D3-B2), so even a burst of admin-triggered refreshes across every seeded instrument stays
+ * inside the token bucket.
+ *
+ * &lt;p&gt;Partial success is the normal outcome, not an error (API_CONTRACT.md §17): a failure for
+ * one symbol is caught and reported per-symbol, and never stops the rest of the batch or
+ * propagates out of {@link #refresh}.
+ */
+@Component
+public class PriceRefreshScheduler {
+
+<span class="fc" id="L38">    private static final Logger log = LoggerFactory.getLogger(PriceRefreshScheduler.class);</span>
+
+    /** No stored history at all yet — grab a conservative week rather than the whole two-year
+     * seed window on every miss. */
+    private static final int DEFAULT_BACKFILL_DAYS = 7;
+
+    private final MarketDataProvider marketDataProvider;
+    private final PriceHistoryRepository priceHistoryRepository;
+    private final InstrumentLookupRepository instrumentLookupRepository;
+    private final Clock clock;
+    private final Set&lt;String&gt; adminEmails;
+
+    @Autowired
+    public PriceRefreshScheduler(MarketDataProvider marketDataProvider,
+                                  PriceHistoryRepository priceHistoryRepository,
+                                  InstrumentLookupRepository instrumentLookupRepository,
+                                  Clock clock,
+<span class="fc" id="L55">                                  @Value(&quot;${admin.emails:}&quot;) String adminEmailsProperty) {</span>
+<span class="fc" id="L56">        this.marketDataProvider = marketDataProvider;</span>
+<span class="fc" id="L57">        this.priceHistoryRepository = priceHistoryRepository;</span>
+<span class="fc" id="L58">        this.instrumentLookupRepository = instrumentLookupRepository;</span>
+<span class="fc" id="L59">        this.clock = clock;</span>
+<span class="fc" id="L60">        this.adminEmails = parseAdminEmails(adminEmailsProperty);</span>
+<span class="fc" id="L61">    }</span>
+
+    private static Set&lt;String&gt; parseAdminEmails(String property) {
+<span class="pc bpc" id="L64" title="1 of 4 branches missed.">        if (property == null || property.isBlank()) {</span>
+<span class="fc" id="L65">            return Set.of();</span>
+        }
+<span class="fc" id="L67">        return java.util.Arrays.stream(property.split(&quot;,&quot;))</span>
+<span class="fc" id="L68">                .map(String::strip)</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">                .filter(s -&gt; !s.isEmpty())</span>
+<span class="fc" id="L70">                .map(s -&gt; s.toLowerCase(Locale.ROOT))</span>
+<span class="fc" id="L71">                .collect(Collectors.toUnmodifiableSet());</span>
+    }
+
+    @Scheduled(cron = &quot;${marketdata.refresh.cron:0 0 6 * * *}&quot;)
+    public void scheduledRefresh() {
+<span class="nc" id="L76">        RefreshPricesResult result = refresh(null, null);</span>
+<span class="nc" id="L77">        log.info(&quot;Scheduled price refresh: requested={} updated={} skipped={} failed={}&quot;,</span>
+<span class="nc" id="L78">                result.requested(), result.updated(), result.skipped(), result.failed());</span>
+<span class="nc" id="L79">    }</span>
+
+    /** Restricted to {@code ADMIN_EMAILS} — anyone else gets 403 (via the existing
+     * {@code GlobalExceptionHandler}'s {@code AccessDeniedException} handler). */
+    public RefreshPricesResult adminRefresh(List&lt;String&gt; symbolsOrNull, LocalDate fromOrNull, String callerEmail) {
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        String normalised = callerEmail == null ? &quot;&quot; : callerEmail.strip().toLowerCase(Locale.ROOT);</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">        if (!adminEmails.contains(normalised)) {</span>
+<span class="fc" id="L86">            throw new AccessDeniedException(&quot;Not permitted to trigger a price refresh&quot;);</span>
+        }
+<span class="fc" id="L88">        return refresh(symbolsOrNull, fromOrNull);</span>
+    }
+
+    /** {@code symbolsOrNull == null} means every seeded instrument. Never throws — a failure
+     * for one symbol becomes a {@code FAILED} entry, not an aborted batch. */
+    public RefreshPricesResult refresh(List&lt;String&gt; symbolsOrNull, LocalDate fromOrNull) {
+<span class="fc" id="L94">        List&lt;InstrumentLookupRepository.InstrumentRef&gt; targets = resolveTargets(symbolsOrNull);</span>
+
+<span class="fc" id="L96">        List&lt;SymbolRefreshResult&gt; results = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L97" title="All 2 branches covered.">        for (InstrumentLookupRepository.InstrumentRef instrument : targets) {</span>
+<span class="fc" id="L98">            results.add(refreshOne(instrument, fromOrNull));</span>
+<span class="fc" id="L99">        }</span>
+
+<span class="fc" id="L101">        int updated = countByStatus(results, RefreshStatus.UPDATED);</span>
+<span class="fc" id="L102">        int skipped = countByStatus(results, RefreshStatus.SKIPPED);</span>
+<span class="fc" id="L103">        int failed = countByStatus(results, RefreshStatus.FAILED);</span>
+<span class="fc" id="L104">        return new RefreshPricesResult(targets.size(), updated, skipped, failed, results);</span>
+    }
+
+    private List&lt;InstrumentLookupRepository.InstrumentRef&gt; resolveTargets(List&lt;String&gt; symbolsOrNull) {
+<span class="fc" id="L108">        List&lt;InstrumentLookupRepository.InstrumentRef&gt; all = instrumentLookupRepository.findAll();</span>
+<span class="pc bpc" id="L109" title="1 of 4 branches missed.">        if (symbolsOrNull == null || symbolsOrNull.isEmpty()) {</span>
+<span class="fc" id="L110">            return all;</span>
+        }
+<span class="fc" id="L112">        Set&lt;String&gt; wanted = symbolsOrNull.stream()</span>
+<span class="fc" id="L113">                .map(s -&gt; s.strip().toUpperCase(Locale.ROOT))</span>
+<span class="fc" id="L114">                .collect(Collectors.toSet());</span>
+<span class="fc" id="L115">        return all.stream()</span>
+<span class="fc" id="L116">                .filter(i -&gt; wanted.contains(i.symbol().toUpperCase(Locale.ROOT)))</span>
+<span class="fc" id="L117">                .toList();</span>
+    }
+
+    private SymbolRefreshResult refreshOne(InstrumentLookupRepository.InstrumentRef instrument, LocalDate fromOrNull) {
+        try {
+<span class="fc" id="L122">            LocalDate to = LocalDate.now(clock);</span>
+<span class="fc bfc" id="L123" title="All 2 branches covered.">            LocalDate from = fromOrNull != null ? fromOrNull : nextFetchStart(instrument, to);</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">            if (from.isAfter(to)) {</span>
+<span class="nc" id="L125">                return new SymbolRefreshResult(instrument.symbol(), RefreshStatus.SKIPPED, 0, null, null);</span>
+            }
+
+<span class="fc" id="L128">            List&lt;PriceQuote&gt; quotes = marketDataProvider.dailyCloses(instrument.symbol(), from, to);</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">            if (quotes.isEmpty()) {</span>
+<span class="fc" id="L130">                return new SymbolRefreshResult(instrument.symbol(), RefreshStatus.SKIPPED, 0, null, null);</span>
+            }
+
+<span class="fc bfc" id="L133" title="All 2 branches covered.">            for (PriceQuote quote : quotes) {</span>
+<span class="fc" id="L134">                priceHistoryRepository.upsert(instrument.id(), quote.date(), quote.close(), quote.source());</span>
+<span class="fc" id="L135">            }</span>
+<span class="fc" id="L136">            PriceQuote latest = quotes.stream().max(Comparator.comparing(PriceQuote::date)).orElseThrow();</span>
+<span class="fc" id="L137">            return new SymbolRefreshResult(instrument.symbol(), RefreshStatus.UPDATED, quotes.size(),</span>
+<span class="fc" id="L138">                    latest.date(), latest.source().name());</span>
+<span class="fc" id="L139">        } catch (RuntimeException e) {</span>
+            // A failure for one symbol must never abort the batch (API_CONTRACT.md §17).
+<span class="fc" id="L141">            log.warn(&quot;Price refresh failed for {}: {}&quot;, instrument.symbol(), e.getMessage());</span>
+<span class="fc" id="L142">            return new SymbolRefreshResult(instrument.symbol(), RefreshStatus.FAILED, 0, null, null);</span>
+        }
+    }
+
+    private LocalDate nextFetchStart(InstrumentLookupRepository.InstrumentRef instrument, LocalDate today) {
+<span class="fc" id="L147">        return priceHistoryRepository.mostRecentOnOrBefore(instrument.id(), today)</span>
+<span class="pc" id="L148">                .map(row -&gt; row.priceDate().plusDays(1))</span>
+<span class="fc" id="L149">                .orElse(today.minusDays(DEFAULT_BACKFILL_DAYS));</span>
+    }
+
+    private static int countByStatus(List&lt;SymbolRefreshResult&gt; results, RefreshStatus status) {
+<span class="fc bfc" id="L153" title="All 2 branches covered.">        return (int) results.stream().filter(r -&gt; r.status() == status).count();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

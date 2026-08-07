@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CachingMarketDataService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata</a> &gt; <span class="el_source">CachingMarketDataService.java</span></div><h1>CachingMarketDataService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata;
+
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.enums.PriceSource;
+import com.protify.portfolio.common.port.MarketDataProvider;
+import com.protify.portfolio.common.port.PriceQuote;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * D2-B2 — the fallback chain (ADR-0008, `/docs/ARCHITECTURE.md` §7), today's slice of it:
+ *
+ * &lt;pre&gt;
+ * Caffeine (15 min TTL)
+ *   → HTTP provider (adapter's own 3 s timeout, 1 retry)
+ *     → price_history most recent row on or before the date
+ *       → (seeded rows live in the same table, source = SEED — no separate step needed)
+ * &lt;/pre&gt;
+ *
+ * &lt;p&gt;&lt;b&gt;Never throws on provider failure.&lt;/b&gt; It degrades and reports the real {@code asOf}
+ * date of whatever was actually served — a stale price is data with a date on it, not an error.
+ * Rate limiting and a circuit breaker are tomorrow's task (D3); today the adapter's own
+ * timeout/retry is the only protection, which is why nothing here calls it more than once per
+ * cache miss.
+ */
+@Service
+public class CachingMarketDataService {
+
+<span class="fc" id="L38">    private static final Logger log = LoggerFactory.getLogger(CachingMarketDataService.class);</span>
+<span class="fc" id="L39">    private static final Duration CACHE_TTL = Duration.ofMinutes(15);</span>
+
+    private final MarketDataProvider marketDataProvider;
+    private final PriceHistoryRepository priceHistoryRepository;
+    private final InstrumentLookupRepository instrumentLookupRepository;
+    private final Cache&lt;String, PriceResult&gt; cache;
+
+    @Autowired
+    public CachingMarketDataService(MarketDataProvider marketDataProvider,
+                                     PriceHistoryRepository priceHistoryRepository,
+                                     InstrumentLookupRepository instrumentLookupRepository) {
+<span class="fc" id="L50">        this(marketDataProvider, priceHistoryRepository, instrumentLookupRepository,</span>
+<span class="fc" id="L51">                Caffeine.newBuilder().expireAfterWrite(CACHE_TTL).build());</span>
+<span class="fc" id="L52">    }</span>
+
+    /** Test-only seam: inject a cache built with a fake {@code Ticker} to prove the 15-minute
+     * TTL without a real wait. */
+    CachingMarketDataService(MarketDataProvider marketDataProvider,
+                              PriceHistoryRepository priceHistoryRepository,
+                              InstrumentLookupRepository instrumentLookupRepository,
+<span class="fc" id="L59">                              Cache&lt;String, PriceResult&gt; cache) {</span>
+<span class="fc" id="L60">        this.marketDataProvider = marketDataProvider;</span>
+<span class="fc" id="L61">        this.priceHistoryRepository = priceHistoryRepository;</span>
+<span class="fc" id="L62">        this.instrumentLookupRepository = instrumentLookupRepository;</span>
+<span class="fc" id="L63">        this.cache = cache;</span>
+<span class="fc" id="L64">    }</span>
+
+    /**
+     * The shape valuation calls tomorrow. Returns empty only if the provider, {@code
+     * price_history} and the seed data all have nothing for this instrument — structurally
+     * possible, practically rare, since {@code V11} seeds two years of history for every
+     * instrument.
+     */
+    public Optional&lt;PriceResult&gt; priceFor(long instrumentId, LocalDate date) {
+<span class="fc" id="L73">        String cacheKey = instrumentId + &quot;:&quot; + date;</span>
+<span class="fc" id="L74">        PriceResult cached = cache.getIfPresent(cacheKey);</span>
+<span class="fc bfc" id="L75" title="All 2 branches covered.">        if (cached != null) {</span>
+<span class="fc" id="L76">            return Optional.of(cached);</span>
+        }
+
+<span class="fc" id="L79">        Optional&lt;PriceResult&gt; result = resolve(instrumentId, date);</span>
+<span class="fc" id="L80">        result.ifPresent(r -&gt; cache.put(cacheKey, r));</span>
+<span class="fc" id="L81">        return result;</span>
+    }
+
+    private Optional&lt;PriceResult&gt; resolve(long instrumentId, LocalDate date) {
+<span class="fc" id="L85">        Optional&lt;InstrumentLookupRepository.InstrumentRef&gt; instrument = instrumentLookupRepository.findById(instrumentId);</span>
+<span class="pc bpc" id="L86" title="1 of 2 branches missed.">        if (instrument.isEmpty()) {</span>
+<span class="nc" id="L87">            log.warn(&quot;priceFor called for unknown instrument id {}&quot;, instrumentId);</span>
+<span class="nc" id="L88">            return fallbackToHistory(instrumentId, date);</span>
+        }
+
+<span class="fc" id="L91">        Optional&lt;PriceResult&gt; fromProvider = fetchFromProvider(instrument.get(), date);</span>
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        if (fromProvider.isPresent()) {</span>
+<span class="fc" id="L93">            return fromProvider;</span>
+        }
+<span class="fc" id="L95">        return fallbackToHistory(instrumentId, date);</span>
+    }
+
+    private Optional&lt;PriceResult&gt; fetchFromProvider(InstrumentLookupRepository.InstrumentRef instrument, LocalDate date) {
+        try {
+<span class="fc" id="L100">            List&lt;PriceQuote&gt; quotes = marketDataProvider.dailyCloses(instrument.symbol(), date, date);</span>
+<span class="fc" id="L101">            return quotes.stream()</span>
+<span class="fc" id="L102">                    .filter(q -&gt; q.date().equals(date))</span>
+<span class="fc" id="L103">                    .findFirst()</span>
+<span class="fc" id="L104">                    .map(q -&gt; {</span>
+<span class="fc" id="L105">                        PriceSource source = PriceSource.fromDbValue(marketDataProvider.sourceName()).orElse(q.source());</span>
+<span class="fc" id="L106">                        priceHistoryRepository.upsert(instrument.id(), q.date(), q.close(), source);</span>
+<span class="fc" id="L107">                        return new PriceResult(q.close(), q.currency(), q.date(), source);</span>
+                    });
+<span class="fc" id="L109">        } catch (RuntimeException e) {</span>
+            // Adapters are documented to never throw, but the service itself must never
+            // propagate a provider failure either way — belt and suspenders.
+<span class="fc" id="L112">            log.warn(&quot;Market data provider failed for {}: {}&quot;, instrument.symbol(), e.getMessage());</span>
+<span class="fc" id="L113">            return Optional.empty();</span>
+        }
+    }
+
+    private Optional&lt;PriceResult&gt; fallbackToHistory(long instrumentId, LocalDate date) {
+<span class="fc" id="L118">        return priceHistoryRepository.mostRecentOnOrBefore(instrumentId, date)</span>
+<span class="fc" id="L119">                .map(row -&gt; new PriceResult(row.closePrice(), currencyFor(instrumentId), row.priceDate(), row.source()));</span>
+    }
+
+    private CurrencyCode currencyFor(long instrumentId) {
+<span class="fc" id="L123">        return instrumentLookupRepository.findById(instrumentId)</span>
+<span class="fc" id="L124">                .map(InstrumentLookupRepository.InstrumentRef::currency)</span>
+<span class="fc" id="L125">                .orElse(CurrencyCode.USD);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

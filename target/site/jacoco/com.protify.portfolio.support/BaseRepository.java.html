@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BaseRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.support</a> &gt; <span class="el_source">BaseRepository.java</span></div><h1>BaseRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.support;
+
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
+
+/**
+ * The {@code KeyHolder} + {@code RETURN_GENERATED_KEYS} insert helper, written once
+ * (REFERENCE_DESIGN §1's MySQL gotchas). No other class in the codebase constructs a
+ * {@link KeyHolder} — every {@code *Repository} extends this and calls {@link #insert} instead.
+ */
+public abstract class BaseRepository {
+
+    protected final NamedParameterJdbcTemplate jdbcTemplate;
+
+<span class="fc" id="L17">    protected BaseRepository(NamedParameterJdbcTemplate jdbcTemplate) {</span>
+<span class="fc" id="L18">        this.jdbcTemplate = jdbcTemplate;</span>
+<span class="fc" id="L19">    }</span>
+
+    /**
+     * Runs an insert against a table with an auto-increment {@code id} primary key and returns
+     * the generated value.
+     */
+    protected long insert(String sql, SqlParameterSource params) {
+<span class="fc" id="L26">        KeyHolder keyHolder = new GeneratedKeyHolder();</span>
+<span class="fc" id="L27">        jdbcTemplate.update(sql, params, keyHolder, new String[] {&quot;id&quot;});</span>
+<span class="fc" id="L28">        Number key = keyHolder.getKey();</span>
+<span class="pc bpc" id="L29" title="1 of 2 branches missed.">        if (key == null) {</span>
+<span class="nc" id="L30">            throw new IllegalStateException(&quot;Insert did not return a generated key: &quot; + sql);</span>
+        }
+<span class="fc" id="L32">        return key.longValue();</span>
+    }
+
+    /**
+     * Runs an {@code INSERT ... ON DUPLICATE KEY UPDATE} upsert. The caller supplies the full
+     * statement, including the update clause — this only exists so every repository upserts
+     * through the same named, reviewable path. Returns the JDBC update count.
+     */
+    protected int upsert(String sql, SqlParameterSource params) {
+<span class="fc" id="L41">        return jdbcTemplate.update(sql, params);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

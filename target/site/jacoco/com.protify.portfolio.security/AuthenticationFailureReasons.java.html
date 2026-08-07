@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthenticationFailureReasons.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.security</a> &gt; <span class="el_source">AuthenticationFailureReasons.java</span></div><h1>AuthenticationFailureReasons.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.security;
+
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
+
+/**
+ * D1-B1 / {@code /docs/RISKS.md} R6 — a bad signature, a wrong {@code aud}, a wrong {@code iss}
+ * and an expired token must be distinguishable reasons &lt;em&gt;in the logs&lt;/em&gt;, even though the
+ * response body Dev C's {@code GlobalExceptionHandler} sends back is deliberately the same
+ * generic {@code /errors/unauthenticated} shape for all of them (a 401 body must not tell an
+ * attacker which check it failed). {@link SecurityConfig}'s entry point logs the result of this
+ * before delegating to {@code GlobalExceptionHandler}.
+ */
+final class AuthenticationFailureReasons {
+
+    private AuthenticationFailureReasons() {
+    }
+
+    static String reasonFor(AuthenticationException authException) {
+<span class="pc bpc" id="L20" title="1 of 4 branches missed.">        if (authException instanceof OAuth2AuthenticationException oauth2Ex &amp;&amp; oauth2Ex.getError() != null) {</span>
+<span class="fc" id="L21">            String description = oauth2Ex.getError().getDescription();</span>
+<span class="fc bfc" id="L22" title="All 2 branches covered.">            return description != null ? description : oauth2Ex.getError().getErrorCode();</span>
+        }
+<span class="fc bfc" id="L24" title="All 2 branches covered.">        return authException.getMessage() != null</span>
+<span class="fc" id="L25">                ? authException.getMessage()</span>
+<span class="fc" id="L26">                : &quot;A valid bearer token is required&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

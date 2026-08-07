@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationSnapshotScheduler.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationSnapshotScheduler.java</span></div><h1>ValuationSnapshotScheduler.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioRepository;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+
+/**
+ * day-5-dev-A.md D5-A2's &quot;a nightly job writes one row per portfolio per completed day&quot;.
+ *
+ * &lt;p&gt;&lt;b&gt;It has no valuation logic of its own, on purpose.&lt;/b&gt; It asks {@link PerformanceService}
+ * for the last few days of each portfolio's series, and that read path memoises every completed
+ * day it had to fold. A job that computed and wrote snapshots itself would be a second
+ * implementation of the fold, free to disagree with the one the chart uses — which is the exact
+ * failure mode {@link ValuationSnapshot} exists to rule out.
+ *
+ * &lt;p&gt;It also lives in its own class rather than on {@link ValuationSnapshotService} because it
+ * needs {@link PerformanceService}, which needs {@code ValuationSnapshotService} — putting the
+ * two together would be a constructor cycle Spring cannot construct.
+ *
+ * &lt;p&gt;&lt;b&gt;Why it rewrites a window rather than just yesterday.&lt;/b&gt; {@code price_history} is
+ * backfilled: a provider outage on Tuesday means Tuesday's closes may not land until Thursday,
+ * and a snapshot taken in between would freeze a forward-filled value forever. Re-deriving the
+ * last {@value #REWRITE_WINDOW_DAYS} days each night costs almost nothing and closes that hole.
+ */
+@Component
+public class ValuationSnapshotScheduler {
+
+<span class="fc" id="L34">    private static final Logger log = LoggerFactory.getLogger(ValuationSnapshotScheduler.class);</span>
+
+    /** Long enough to cover a provider outage across a weekend plus a working day. */
+    static final int REWRITE_WINDOW_DAYS = 7;
+
+    private final PortfolioRepository portfolioRepository;
+    private final PerformanceService performanceService;
+    private final ValuationSnapshotService snapshotService;
+    private final Clock clock;
+
+    public ValuationSnapshotScheduler(
+            PortfolioRepository portfolioRepository,
+            PerformanceService performanceService,
+            ValuationSnapshotService snapshotService,
+<span class="fc" id="L48">            Clock clock) {</span>
+<span class="fc" id="L49">        this.portfolioRepository = portfolioRepository;</span>
+<span class="fc" id="L50">        this.performanceService = performanceService;</span>
+<span class="fc" id="L51">        this.snapshotService = snapshotService;</span>
+<span class="fc" id="L52">        this.clock = clock;</span>
+<span class="fc" id="L53">    }</span>
+
+    /**
+     * Defaulted in code rather than in {@code application.properties}, which is Dev B's file.
+     * 02:30 UTC: after the day is unambiguously over everywhere, before the 06:15 FX refresh.
+     */
+    @Scheduled(cron = &quot;${valuation.snapshot.cron:0 30 2 * * *}&quot;)
+    public void materialiseCompletedDays() {
+<span class="nc" id="L61">        LocalDate yesterday = LocalDate.now(clock).minusDays(1);</span>
+<span class="nc" id="L62">        LocalDate from = yesterday.minusDays(REWRITE_WINDOW_DAYS - 1L);</span>
+
+<span class="nc" id="L64">        List&lt;Portfolio&gt; portfolios = portfolioRepository.findAllForSnapshotJob();</span>
+<span class="nc" id="L65">        int materialised = 0;</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        for (Portfolio portfolio : portfolios) {</span>
+            try {
+                // Drop the window first so the read path genuinely re-derives it rather than
+                // handing back the rows it is meant to be refreshing.
+<span class="nc" id="L70">                snapshotService.invalidateFrom(portfolio.id(), from);</span>
+<span class="nc" id="L71">                performanceService.getPerformance(portfolio.userId(), portfolio.id(), from, yesterday,</span>
+<span class="nc" id="L72">                        portfolio.baseCurrency());</span>
+<span class="nc" id="L73">                materialised++;</span>
+<span class="nc" id="L74">            } catch (RuntimeException e) {</span>
+                // One portfolio with an unpriceable instrument must not stop the other 99.
+<span class="nc" id="L76">                log.warn(&quot;Could not materialise valuations for portfolio {}: {}&quot;,</span>
+<span class="nc" id="L77">                        portfolio.id(), e.getMessage());</span>
+<span class="nc" id="L78">            }</span>
+<span class="nc" id="L79">        }</span>
+<span class="nc" id="L80">        log.info(&quot;Materialised valuation snapshots for {}/{} portfolios over {} to {}&quot;,</span>
+<span class="nc" id="L81">                materialised, portfolios.size(), from, yesterday);</span>
+<span class="nc" id="L82">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

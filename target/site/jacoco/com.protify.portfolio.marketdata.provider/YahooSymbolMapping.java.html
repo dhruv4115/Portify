@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>YahooSymbolMapping.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.marketdata.provider</a> &gt; <span class="el_source">YahooSymbolMapping.java</span></div><h1>YahooSymbolMapping.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.marketdata.provider;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+
+import java.util.Map;
+
+/**
+ * D2-B1 — symbol mapping lives in the adapter, not the database: {@code instrument.symbol}
+ * holds the clean symbol ({@code RELIANCE}, {@code SHEL}); this maps it to the ticker Yahoo's
+ * chart endpoint expects, and records which currency (and GBX→GBP conversion) applies. The
+ * port's {@code symbol} parameter carries no exchange, so a lookup table is the only option —
+ * agreed with Dev A per {@code /docs/PLAN.md} against the 18 instruments seeded in
+ * {@code V2__seed_instruments.sql}.
+ */
+final class YahooSymbolMapping {
+
+<span class="fc" id="L17">    record Mapping(String providerSymbol, CurrencyCode currency, boolean quotedInMinorUnits) {</span>
+    }
+
+    // NSE and LSE quote in their exchange's minor unit for LSE only (GBX/pence); NSE does not.
+<span class="fc" id="L21">    private static final Map&lt;String, Mapping&gt; CLEAN_TO_MAPPING = Map.ofEntries(</span>
+            // USD — ticker unchanged
+<span class="fc" id="L23">            Map.entry(&quot;AAPL&quot;, new Mapping(&quot;AAPL&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L24">            Map.entry(&quot;MSFT&quot;, new Mapping(&quot;MSFT&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L25">            Map.entry(&quot;NVDA&quot;, new Mapping(&quot;NVDA&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L26">            Map.entry(&quot;JPM&quot;, new Mapping(&quot;JPM&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L27">            Map.entry(&quot;SPY&quot;, new Mapping(&quot;SPY&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L28">            Map.entry(&quot;QQQ&quot;, new Mapping(&quot;QQQ&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L29">            Map.entry(&quot;AGG&quot;, new Mapping(&quot;AGG&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L30">            Map.entry(&quot;US10Y&quot;, new Mapping(&quot;US10Y&quot;, CurrencyCode.USD, false)),</span>
+<span class="fc" id="L31">            Map.entry(&quot;BTC-USD&quot;, new Mapping(&quot;BTC-USD&quot;, CurrencyCode.USD, false)),</span>
+            // NSE — .NS suffix, INR, not minor units
+<span class="fc" id="L33">            Map.entry(&quot;RELIANCE&quot;, new Mapping(&quot;RELIANCE.NS&quot;, CurrencyCode.INR, false)),</span>
+<span class="fc" id="L34">            Map.entry(&quot;TCS&quot;, new Mapping(&quot;TCS.NS&quot;, CurrencyCode.INR, false)),</span>
+<span class="fc" id="L35">            Map.entry(&quot;HDFCBANK&quot;, new Mapping(&quot;HDFCBANK.NS&quot;, CurrencyCode.INR, false)),</span>
+<span class="fc" id="L36">            Map.entry(&quot;NIFTYBEES&quot;, new Mapping(&quot;NIFTYBEES.NS&quot;, CurrencyCode.INR, false)),</span>
+<span class="fc" id="L37">            Map.entry(&quot;SBIBLUECHIP&quot;, new Mapping(&quot;SBIBLUECHIP.NS&quot;, CurrencyCode.INR, false)),</span>
+            // LSE — .L suffix, GBP, quoted in GBX (pence) — /docs/RISKS.md R14
+<span class="fc" id="L39">            Map.entry(&quot;SHEL&quot;, new Mapping(&quot;SHEL.L&quot;, CurrencyCode.GBP, true)),</span>
+<span class="fc" id="L40">            Map.entry(&quot;HSBA&quot;, new Mapping(&quot;HSBA.L&quot;, CurrencyCode.GBP, true)),</span>
+<span class="fc" id="L41">            Map.entry(&quot;VUKE&quot;, new Mapping(&quot;VUKE.L&quot;, CurrencyCode.GBP, true)),</span>
+            // XETRA — .DE suffix, EUR
+<span class="fc" id="L43">            Map.entry(&quot;SAP&quot;, new Mapping(&quot;SAP.DE&quot;, CurrencyCode.EUR, false)),</span>
+<span class="fc" id="L44">            Map.entry(&quot;EXS1&quot;, new Mapping(&quot;EXS1.DE&quot;, CurrencyCode.EUR, false)));</span>
+
+    private YahooSymbolMapping() {
+    }
+
+    /** Falls back to the symbol as-is, assumed USD — covers any instrument not yet mapped. */
+    static Mapping resolve(String cleanSymbol) {
+<span class="fc" id="L51">        String normalised = cleanSymbol.strip().toUpperCase();</span>
+<span class="fc" id="L52">        return CLEAN_TO_MAPPING.getOrDefault(normalised, new Mapping(normalised, CurrencyCode.USD, false));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

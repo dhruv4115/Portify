@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationSnapshot.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationSnapshot.java</span></div><h1>ValuationSnapshot.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.money.MoneyUtils;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+/**
+ * One row of {@code portfolio_valuation_daily} — a completed day's valuation, memoised.
+ *
+ * &lt;p&gt;A snapshot is a &lt;b&gt;cache over&lt;/b&gt; the fold, never the source of truth (ADR-0010). It exists
+ * only so a 365-day chart does not re-price 365 days of positions on every request, and it is
+ * invalidated by the same event that makes it wrong — exactly the relationship {@code txn} has
+ * with {@code holding}.
+ *
+ * &lt;p&gt;{@link #toPoint()} and {@link #of} are inverses. That is deliberate and it is what
+ * {@code ValuationSnapshotIT} asserts: a day served from this table must be indistinguishable
+ * from the same day folded live, down to {@code filled} and the {@code asOf} dates, or the chart
+ * changes shape depending on whether the cache happened to be warm.
+ */
+<span class="fc" id="L21">public record ValuationSnapshot(</span>
+        long portfolioId,
+        LocalDate date,
+        CurrencyCode currency,
+        BigDecimal marketValue,
+        BigDecimal costBasis,
+        BigDecimal cashBalance,
+        BigDecimal unrealisedPnl,
+        boolean filled,
+        LocalDate priceAsOf,
+        LocalDate rateAsOf) {
+
+    /** {@code totalValue} is not stored: it is {@code marketValue + cashBalance}, and both are
+     * {@code DECIMAL(19,4)}, so recomputing it here is exact rather than approximate. */
+    public PerformancePoint toPoint() {
+<span class="fc" id="L36">        return new PerformancePoint(date, marketValue, costBasis, cashBalance,</span>
+<span class="fc" id="L37">                MoneyUtils.money(marketValue.add(cashBalance)), unrealisedPnl, filled);</span>
+    }
+
+    public static ValuationSnapshot of(long portfolioId, CurrencyCode currency, PerformancePoint point,
+            LocalDate priceAsOf, LocalDate rateAsOf) {
+<span class="fc" id="L42">        return new ValuationSnapshot(portfolioId, point.date(), currency, point.marketValue(),</span>
+<span class="fc" id="L43">                point.costBasis(), point.cashBalance(), point.unrealisedPnl(), point.filled(),</span>
+                priceAsOf, rateAsOf);
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

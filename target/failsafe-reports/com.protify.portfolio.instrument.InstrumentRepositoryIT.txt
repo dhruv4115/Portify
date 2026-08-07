@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.protify.portfolio.instrument.InstrumentRepositoryIT
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 8.810 s -- in com.protify.portfolio.instrument.InstrumentRepositoryIT

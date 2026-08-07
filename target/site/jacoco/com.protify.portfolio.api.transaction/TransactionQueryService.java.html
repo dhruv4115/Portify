@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TransactionQueryService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.api.transaction</a> &gt; <span class="el_source">TransactionQueryService.java</span></div><h1>TransactionQueryService.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.api.transaction;
+
+import com.protify.portfolio.api.dto.TransactionResponse;
+import com.protify.portfolio.api.mapper.TransactionMapper;
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.common.error.ValidationException;
+import com.protify.portfolio.common.port.FxQuote;
+import com.protify.portfolio.fx.CachingFxRateService;
+import com.protify.portfolio.instrument.Instrument;
+import com.protify.portfolio.instrument.InstrumentRepository;
+import com.protify.portfolio.portfolio.Portfolio;
+import com.protify.portfolio.portfolio.PortfolioService;
+import com.protify.portfolio.support.Page;
+import com.protify.portfolio.support.Pageable;
+import com.protify.portfolio.transaction.RecordTransactionCommand;
+import com.protify.portfolio.transaction.TransactionRepository;
+import com.protify.portfolio.transaction.Txn;
+import com.protify.portfolio.transaction.TxnFilter;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import org.springframework.stereotype.Service;
+
+/**
+ * The read half of {@code /portfolios/{id}/transactions} (day-3-dev-C.md D3-C1): everything
+ * needed to turn a {@code txn} row into API_CONTRACT.md §7's response shape, which is more than
+ * the row carries — the instrument, the portfolio's base currency, and the FX rate on the
+ * transaction's own execution date.
+ *
+ * &lt;p&gt;Read-side only, and deliberately separate from Dev A's {@code TransactionService}, which
+ * owns every write and the projection rebuild. It exists so the controller stays
+ * validate-delegate-map: assembling a response across four collaborators is not something a
+ * controller should be doing.
+ *
+ * &lt;p&gt;Every method takes {@code userId} and resolves the portfolio through
+ * {@link PortfolioService#getOrThrow} before touching a transaction, so another user's portfolio
+ * is a {@code NotFoundException} — 404, never 403 — and no transaction query can run unscoped.
+ */
+@Service
+public class TransactionQueryService {
+
+    private final PortfolioService portfolioService;
+    private final TransactionRepository transactionRepository;
+    private final InstrumentRepository instrumentRepository;
+    private final CachingFxRateService fxRateService;
+    private final TransactionMapper transactionMapper;
+
+    public TransactionQueryService(
+            PortfolioService portfolioService,
+            TransactionRepository transactionRepository,
+            InstrumentRepository instrumentRepository,
+            CachingFxRateService fxRateService,
+<span class="fc" id="L58">            TransactionMapper transactionMapper) {</span>
+<span class="fc" id="L59">        this.portfolioService = portfolioService;</span>
+<span class="fc" id="L60">        this.transactionRepository = transactionRepository;</span>
+<span class="fc" id="L61">        this.instrumentRepository = instrumentRepository;</span>
+<span class="fc" id="L62">        this.fxRateService = fxRateService;</span>
+<span class="fc" id="L63">        this.transactionMapper = transactionMapper;</span>
+<span class="fc" id="L64">    }</span>
+
+    public Page&lt;TransactionResponse&gt; list(long userId, long portfolioId, TxnFilter filter, Pageable pageable) {
+<span class="fc" id="L67">        requireValidRange(filter);</span>
+<span class="fc" id="L68">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+
+<span class="fc" id="L70">        Page&lt;Txn&gt; page = transactionRepository.findByPortfolioFiltered(portfolioId, filter, pageable);</span>
+<span class="fc" id="L71">        Map&lt;Long, Instrument&gt; instruments = instrumentsFor(page.content());</span>
+<span class="fc" id="L72">        List&lt;TransactionResponse&gt; content = page.content().stream()</span>
+<span class="fc" id="L73">                .map(txn -&gt; toResponse(txn, instruments.get(txn.instrumentId()), portfolio.baseCurrency(), List.of()))</span>
+<span class="fc" id="L74">                .toList();</span>
+
+<span class="fc" id="L76">        return new Page&lt;&gt;(content, page.page(), page.size(), page.totalElements());</span>
+    }
+
+    /**
+     * Renders the transaction a {@code POST} has just written, for its 201 body. Rebuilds the
+     * {@link Txn} from the command plus the generated id rather than re-reading it: the row was
+     * written from exactly these values inside a committed transaction, so a second SELECT would
+     * return the same numbers at the cost of another round trip.
+     */
+    public TransactionResponse describe(long userId, long portfolioId, long txnId,
+            RecordTransactionCommand command, List&lt;String&gt; warnings) {
+<span class="fc" id="L87">        Portfolio portfolio = portfolioService.getOrThrow(userId, portfolioId);</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        Instrument instrument = command.symbol() == null</span>
+<span class="fc" id="L89">                ? null</span>
+<span class="fc" id="L90">                : instrumentRepository.findBySymbol(command.symbol()).orElse(null);</span>
+
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        Txn txn = new Txn(txnId, portfolioId, instrument == null ? null : instrument.id(),</span>
+<span class="fc" id="L93">                command.txnType(), command.quantity(), command.price(), command.fees(),</span>
+<span class="fc" id="L94">                command.currency(), command.executedAt(), command.note(), null);</span>
+
+<span class="fc" id="L96">        return toResponse(txn, instrument, portfolio.baseCurrency(), warnings);</span>
+    }
+
+    private TransactionResponse toResponse(Txn txn, Instrument instrument, CurrencyCode baseCurrency,
+            List&lt;String&gt; warnings) {
+<span class="fc" id="L101">        return transactionMapper.toResponse(txn, instrument, baseCurrency,</span>
+<span class="fc" id="L102">                tradeDateRate(txn, baseCurrency), warnings);</span>
+    }
+
+    /**
+     * The rate on {@code executedAt}, not today's (API_CONTRACT.md §7). {@code null} when no rate
+     * for that date exists anywhere in the fallback chain — {@code totalBase} is then reported as
+     * {@code null} rather than being quietly assumed to be 1:1, which would misstate a
+     * cross-currency transaction by whatever the real rate was.
+     */
+    private BigDecimal tradeDateRate(Txn txn, CurrencyCode baseCurrency) {
+<span class="fc" id="L112">        LocalDate executedOn = txn.executedAt().atZone(ZoneOffset.UTC).toLocalDate();</span>
+<span class="fc" id="L113">        return fxRateService.rate(txn.currency(), baseCurrency, executedOn)</span>
+<span class="fc" id="L114">                .map(FxQuote::rate)</span>
+<span class="fc" id="L115">                .orElse(null);</span>
+    }
+
+    /** One lookup per distinct instrument on the page, not one per row. */
+    private Map&lt;Long, Instrument&gt; instrumentsFor(List&lt;Txn&gt; txns) {
+<span class="fc" id="L120">        Map&lt;Long, Instrument&gt; instruments = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L121">        txns.stream()</span>
+<span class="fc" id="L122">                .map(Txn::instrumentId)</span>
+<span class="fc" id="L123">                .filter(Objects::nonNull)</span>
+<span class="fc" id="L124">                .distinct()</span>
+<span class="fc" id="L125">                .map(instrumentRepository::findById)</span>
+<span class="fc" id="L126">                .flatMap(Optional::stream)</span>
+<span class="fc" id="L127">                .forEach(instrument -&gt; instruments.put(instrument.id(), instrument));</span>
+<span class="fc" id="L128">        return instruments;</span>
+    }
+
+    private static void requireValidRange(TxnFilter filter) {
+<span class="pc bpc" id="L132" title="1 of 6 branches missed.">        if (filter.from() != null &amp;&amp; filter.to() != null &amp;&amp; filter.from().isAfter(filter.to())) {</span>
+<span class="fc" id="L133">            throw new ValidationException(&quot;invalid-date-range&quot;, &quot;from must not be after to.&quot;);</span>
+        }
+<span class="fc" id="L135">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

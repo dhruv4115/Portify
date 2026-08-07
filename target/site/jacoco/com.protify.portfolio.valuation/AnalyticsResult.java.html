@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AnalyticsResult.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">AnalyticsResult.java</span></div><h1>AnalyticsResult.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+
+/**
+ * day-5-dev-A.md D5-A1 / BACKLOG PM-18. Every {@code *Pct} field is a percentage at
+ * {@link com.protify.portfolio.common.money.MoneyUtils#MONEY_SCALE} (four decimal places), so
+ * {@code 10.2702} means 10.2702%, matching {@code MoneyUtils.pctChange}'s convention.
+ *
+ * &lt;p&gt;{@code timeWeightedReturnPct} and {@code simpleReturnPct} are both reported &lt;b&gt;on purpose&lt;/b&gt;.
+ * They answer different questions and, for any portfolio the user has paid money into, they
+ * disagree loudly: the simple figure credits the user's own deposits as investment performance,
+ * the time-weighted one does not. Showing them side by side is the point of the panel.
+ *
+ * &lt;p&gt;Nullability is meaning, not omission:
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@code simpleReturnPct} — {@code null} when the window opened at a value of zero, the
+ *       same rule as {@code MoneyUtils.pctChange} (TEST_PLAN.md §4.2)&lt;/li&gt;
+ *   &lt;li&gt;{@code annualisedReturnPct} — {@code null} for a single-day window (there is no elapsed
+ *       year to project onto) and when the portfolio's growth factor is negative&lt;/li&gt;
+ *   &lt;li&gt;{@code bestDay}/{@code worstDay} — {@code null} when the window holds fewer than two
+ *       points, so there is no day-over-day move at all&lt;/li&gt;
+ *   &lt;li&gt;{@code volatilityPct} — {@code null} with fewer than two daily returns, because a sample
+ *       standard deviation of one observation is undefined, not zero&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L29">public record AnalyticsResult(</span>
+        long portfolioId,
+        CurrencyCode currency,
+        LocalDate from,
+        LocalDate to,
+        /** Elapsed days between the first and last point actually computed, which is not
+         *  {@code to − from} when the portfolio's history starts inside the window. */
+        long days,
+        BigDecimal timeWeightedReturnPct,
+        BigDecimal annualisedReturnPct,
+        BigDecimal simpleReturnPct,
+        BigDecimal netContributions,
+        Drawdown maxDrawdown,
+        DayReturn bestDay,
+        DayReturn worstDay,
+        BigDecimal volatilityPct) {
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

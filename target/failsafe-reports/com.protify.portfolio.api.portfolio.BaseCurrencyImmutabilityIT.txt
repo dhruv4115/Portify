@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.protify.portfolio.api.portfolio.BaseCurrencyImmutabilityIT
+-------------------------------------------------------------------------------
+Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 10.93 s -- in com.protify.portfolio.api.portfolio.BaseCurrencyImmutabilityIT

@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ValuationSnapshotRepository.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">portfolio-backend</a> &gt; <a href="index.source.html" class="el_package">com.protify.portfolio.valuation</a> &gt; <span class="el_source">ValuationSnapshotRepository.java</span></div><h1>ValuationSnapshotRepository.java</h1><pre class="source lang-java linenums">package com.protify.portfolio.valuation;
+
+import com.protify.portfolio.common.enums.CurrencyCode;
+import com.protify.portfolio.support.BaseRepository;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.NavigableMap;
+import java.util.TreeMap;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+/**
+ * {@code portfolio_valuation_daily} — day-5-dev-A.md D5-A2.
+ *
+ * &lt;p&gt;Scoped by {@code portfolioId}, which every caller has already resolved through
+ * {@code PortfolioService.getOrThrow} or {@code lockForUpdate}, exactly like
+ * {@code HoldingRepository}. Nothing here reads a portfolio the caller did not already prove
+ * they own.
+ */
+@Repository
+public class ValuationSnapshotRepository extends BaseRepository {
+
+<span class="fc" id="L24">    private static final ValuationSnapshotRowMapper ROW_MAPPER = new ValuationSnapshotRowMapper();</span>
+
+    public ValuationSnapshotRepository(NamedParameterJdbcTemplate jdbcTemplate) {
+<span class="fc" id="L27">        super(jdbcTemplate);</span>
+<span class="fc" id="L28">    }</span>
+
+    /**
+     * Snapshots for {@code [from, to]} inclusive, keyed by date. A row whose stored currency no
+     * longer maps to a {@link CurrencyCode} is dropped rather than served, which leaves that day
+     * looking uncovered — so it gets recomputed, which is the safe direction to fail in.
+     */
+    public NavigableMap&lt;LocalDate, ValuationSnapshot&gt; findRange(
+            long portfolioId, CurrencyCode currency, LocalDate from, LocalDate to) {
+
+<span class="fc" id="L38">        String sql = &quot;&quot;&quot;</span>
+                SELECT portfolio_id, valuation_date, currency, market_value, cost_basis,
+                       cash_balance, unrealised_pnl, filled, price_as_of, rate_as_of
+                FROM portfolio_valuation_daily
+                WHERE portfolio_id = :portfolioId
+                  AND currency = :currency
+                  AND valuation_date BETWEEN :from AND :to
+                &quot;&quot;&quot;;
+<span class="fc" id="L46">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L47">                .addValue(&quot;portfolioId&quot;, portfolioId)</span>
+<span class="fc" id="L48">                .addValue(&quot;currency&quot;, currency.name())</span>
+<span class="fc" id="L49">                .addValue(&quot;from&quot;, from)</span>
+<span class="fc" id="L50">                .addValue(&quot;to&quot;, to);</span>
+
+<span class="fc" id="L52">        NavigableMap&lt;LocalDate, ValuationSnapshot&gt; byDate = new TreeMap&lt;&gt;();</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        for (ValuationSnapshot snapshot : jdbcTemplate.query(sql, params, ROW_MAPPER)) {</span>
+<span class="pc bpc" id="L54" title="1 of 2 branches missed.">            if (snapshot.currency() != null) {</span>
+<span class="fc" id="L55">                byDate.put(snapshot.date(), snapshot);</span>
+            }
+<span class="fc" id="L57">        }</span>
+<span class="fc" id="L58">        return byDate;</span>
+    }
+
+    /** Idempotent on the {@code uk_val} key, so a concurrent read-through write and the nightly
+     * job cannot collide into a duplicate-key failure. */
+    public void upsert(ValuationSnapshot snapshot) {
+<span class="fc" id="L64">        String sql = &quot;&quot;&quot;</span>
+                INSERT INTO portfolio_valuation_daily
+                    (portfolio_id, valuation_date, currency, market_value, cost_basis,
+                     cash_balance, unrealised_pnl, filled, price_as_of, rate_as_of)
+                VALUES
+                    (:portfolioId, :valuationDate, :currency, :marketValue, :costBasis,
+                     :cashBalance, :unrealisedPnl, :filled, :priceAsOf, :rateAsOf)
+                ON DUPLICATE KEY UPDATE
+                    market_value   = VALUES(market_value),
+                    cost_basis     = VALUES(cost_basis),
+                    cash_balance   = VALUES(cash_balance),
+                    unrealised_pnl = VALUES(unrealised_pnl),
+                    filled         = VALUES(filled),
+                    price_as_of    = VALUES(price_as_of),
+                    rate_as_of     = VALUES(rate_as_of)
+                &quot;&quot;&quot;;
+<span class="fc" id="L80">        upsert(sql, params(snapshot));</span>
+<span class="fc" id="L81">    }</span>
+
+    public void upsertAll(List&lt;ValuationSnapshot&gt; snapshots) {
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        for (ValuationSnapshot snapshot : snapshots) {</span>
+<span class="fc" id="L85">            upsert(snapshot);</span>
+<span class="fc" id="L86">        }</span>
+<span class="fc" id="L87">    }</span>
+
+    /**
+     * Every snapshot on or after {@code from}, for &lt;b&gt;every&lt;/b&gt; currency.
+     *
+     * &lt;p&gt;A transaction inserted or deleted mid-history changes that day and every day after it,
+     * in every currency the portfolio has ever been charted in — so the invalidation is not
+     * scoped by currency, and it is not scoped to a single date either. A stale snapshot is a
+     * wrong chart (day-5-dev-A.md D5-A2).
+     */
+    public int deleteFrom(long portfolioId, LocalDate from) {
+<span class="fc" id="L98">        String sql = &quot;&quot;&quot;</span>
+                DELETE FROM portfolio_valuation_daily
+                WHERE portfolio_id = :portfolioId AND valuation_date &gt;= :from
+                &quot;&quot;&quot;;
+<span class="fc" id="L102">        var params = new MapSqlParameterSource()</span>
+<span class="fc" id="L103">                .addValue(&quot;portfolioId&quot;, portfolioId)</span>
+<span class="fc" id="L104">                .addValue(&quot;from&quot;, from);</span>
+<span class="fc" id="L105">        return jdbcTemplate.update(sql, params);</span>
+    }
+
+    public int deleteAllForPortfolio(long portfolioId) {
+<span class="nc" id="L109">        return jdbcTemplate.update(&quot;DELETE FROM portfolio_valuation_daily WHERE portfolio_id = :portfolioId&quot;,</span>
+<span class="nc" id="L110">                new MapSqlParameterSource(&quot;portfolioId&quot;, portfolioId));</span>
+    }
+
+    private static MapSqlParameterSource params(ValuationSnapshot snapshot) {
+<span class="fc" id="L114">        return new MapSqlParameterSource()</span>
+<span class="fc" id="L115">                .addValue(&quot;portfolioId&quot;, snapshot.portfolioId())</span>
+<span class="fc" id="L116">                .addValue(&quot;valuationDate&quot;, snapshot.date())</span>
+<span class="fc" id="L117">                .addValue(&quot;currency&quot;, snapshot.currency().name())</span>
+<span class="fc" id="L118">                .addValue(&quot;marketValue&quot;, snapshot.marketValue())</span>
+<span class="fc" id="L119">                .addValue(&quot;costBasis&quot;, snapshot.costBasis())</span>
+<span class="fc" id="L120">                .addValue(&quot;cashBalance&quot;, snapshot.cashBalance())</span>
+<span class="fc" id="L121">                .addValue(&quot;unrealisedPnl&quot;, snapshot.unrealisedPnl())</span>
+<span class="fc" id="L122">                .addValue(&quot;filled&quot;, snapshot.filled())</span>
+<span class="fc" id="L123">                .addValue(&quot;priceAsOf&quot;, snapshot.priceAsOf())</span>
+<span class="fc" id="L124">                .addValue(&quot;rateAsOf&quot;, snapshot.rateAsOf());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
